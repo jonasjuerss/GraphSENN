@@ -14,6 +14,7 @@ import custom_logger
 import datasets
 from custom_logger import log
 from graph_senn import GraphSENN
+from pooling_layers import StandardPoolingLayer, GraphSENNPool
 
 device = None
 CONV_TYPES = [GCNConv]
@@ -61,6 +62,8 @@ def train_test_epoch(train: bool, model: GraphSENN, optimizer, loader: DataLoade
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
+
+    # Training Details
     parser.add_argument('--lr', type=float, default=0.01,
                         help='The Adam learning rate to use.')
     parser.add_argument('--wd', type=float, default=5e-4,
@@ -69,34 +72,66 @@ if __name__ == "__main__":
                         help='The number of epochs to train for.')
     parser.add_argument('--batch_size', type=int, default=64,
                         help='The batch size to use.')
-    parser.add_argument('--train_split', type=float, default=0.7,
-                        help='The part of the dataset to use as train set (in (0, 1)).')
-    parser.add_argument('--add_layer', type=int, nargs='+',
-                        default=[32, 32, 32, 32, 32], dest='layer_sizes',
-                        help='The layer sizes to use. Example: --add_layer 16 32 --add_layer 32 64 16 results in a '
-                             'network with 2 pooling steps where 5 message passes are performed before the first and ')
+
+
+    # Architecture
+    parser.add_argument('--gnn_sizes', type=int, nargs='+',
+                        default=[32, 32, 32, 32, 32], dest='gnn_sizes',
+                        help='The layer sizes to use for the GNN.')
     parser.add_argument('--conv_type', type=str, default="GCNConv", choices=[c.__name__ for c in CONV_TYPES],
                         help='The type of graph convolution to use.')
+    parser.add_argument('--gnn_activation', type=str, default="leaky_relu",
+                        help='Activation function to be used in between the GNN layers')
+    parser.add_argument('--aggregation', type=str, default="Sum", choices=["Sum", "Mean", "Max", "Min", "Mul", "Var",
+                                                                           "Std", "Softmax", "PowerMean"],
+                        help='The aggregation function to use over all nodes in the output layer.')
+    parser.add_argument('--senn_pooling', default=True, action=argparse.BooleanOptionalAction,
+                        help="Whether to use our SENN pooling. Baseline otherwise.")
 
+    # SENN
+    parser.add_argument('--h_sizes', type=int, nargs='*',
+                        default=[128, 2], dest='h_sizes',
+                        help='The layer sizes to use for the h network. Can be empty for identity (of last embedding).')
+    parser.add_argument('--per_class_h', default=True, action=argparse.BooleanOptionalAction,
+                        help="Whether to use a different concept scalar h per class or the same one for all.")
+    parser.add_argument('--theta_sizes', type=int, nargs='*',
+                        default=[128, 2], dest='theta_sizes',
+                        help='The layer sizes to use for theta network. Can be empty for identity (of last embedding).')
+    parser.add_argument('--per_class_theta', default=True, action=argparse.BooleanOptionalAction,
+                        help="Whether to use a different concept weight theta per class (this is what SENN does) or the"
+                             " same one for all.")
+
+    # No SENN
+    parser.add_argument('--out_sizes', type=int, nargs='*',
+                        default=[128, 128, 2], dest='out_sizes',
+                        help='The layer sizes to use for the network after aggregation when not using SENN.')
+
+
+    # Dataset
+    parser.add_argument('--dataset', type=str, default="MUTAG", choices=datasets.datasets.keys(),
+                        help='The name of the dataset to use as defined in datasets.py')
+    parser.add_argument('--train_split', type=float, default=0.7,
+                        help='The part of the dataset to use as train set (in (0, 1)).')
+
+
+    # Setup
+    parser.add_argument('--device', type=str, default="cuda",
+                        help='The device to train on. Allows to use CPU or different GPUs.')
+    parser.add_argument('--seed', type=int, default=1,
+                        help='The seed used for pytorch. This also determines the dataset if generated randomly.')
+
+
+    # Logging
     parser.add_argument('--graph_log_freq', type=int, default=50,
                         help='Every how many epochs to log graphs to wandb. The final predictions will always be '
                              'logged, except for if this is negative.')
     parser.add_argument('--graphs_to_log', type=int, default=3,
                         help='How many graphs from the training and testing set to log.')
-    parser.add_argument('--gnn_activation', type=str, default="leaky_relu",
-                        help='Activation function to be used in between the GNN layers')
-
-    parser.add_argument('--dataset', type=str, default="MUTAG", choices=datasets.datasets.keys(),
-                        help='The name of the dataset to use as defined in datasets.py')
-
-    parser.add_argument('--seed', type=int, default=1,
-                        help='The seed used for pytorch. This also determines the dataset if generated randomly.')
-
-    parser.add_argument('--device', type=str, default="cuda",
-                        help='The device to train on. Allows to use CPU or different GPUs.')
     parser.set_defaults(use_wandb=True)
     parser.add_argument('--no_wandb', action='store_false', dest='use_wandb',
                         help='Turns off logging to wandb')
+
+
     args = parser.parse_args()
     args = custom_logger.init(args)
 
@@ -117,7 +152,15 @@ if __name__ == "__main__":
     if conv_type is None:
         raise ValueError(f"No convolution type named \"{args.conv_type}\" found!")
     gnn_activation = getattr(torch.nn.functional, args.gnn_activation)
-    model = GraphSENN(args.layer_sizes, dataset.num_node_features, dataset.num_classes, conv_type, gnn_activation).to(device)
+
+    if args.senn_pooling:
+        pool = GraphSENNPool(args.gnn_sizes[-1], dataset.num_classes, args.theta_sizes, args.h_sizes, args.aggregation,
+                             args.per_class_theta, args.per_class_h)
+    else:
+        pool = StandardPoolingLayer(args.gnn_sizes[-1], dataset.num_classes, args.out_sizes, args.aggregation)
+
+
+    model = GraphSENN(args.gnn_sizes, dataset.num_node_features, dataset.num_classes, conv_type, gnn_activation, pool).to(device)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.wd)
 
