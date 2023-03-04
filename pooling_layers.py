@@ -45,17 +45,18 @@ class StandardPoolingLayer(PoolingLayer):
         return self.out(self.aggr(x=x, index=batch))
 class GraphSENNPool(PoolingLayer):
     def __init__(self, input_dim: int, num_classes: int, theta_sizes: List[int], h_sizes: List[int], aggr: str,
-                 per_class_theta: bool, per_class_h: bool):
+                 per_class_theta: bool, per_class_h: bool, global_theta: bool):
         super().__init__()
         if not per_class_h and not per_class_theta:
             raise ValueError("At least one of theta and h has to be per class. Otherwise, the same predictions would "
                              "need to be made for all classes.")
 
-        theta_sizes = [input_dim] + theta_sizes
+        theta_sizes = [input_dim * (2 if global_theta else 1)] + theta_sizes
         expected_theta_out = num_classes if per_class_theta else 1
         if theta_sizes[-1] != expected_theta_out:
             raise ValueError(f"Theta network has output size {theta_sizes[-1]} but expected {expected_theta_out}!")
         self.theta = mlp_from_sizes(theta_sizes)
+        self.global_theta = global_theta
 
         h_sizes = [input_dim] + h_sizes
         expected_h_out = num_classes if per_class_h else 1
@@ -69,9 +70,16 @@ class GraphSENNPool(PoolingLayer):
     def forward(self, x: torch.Tensor, batch: torch.Tensor):
         # [num_nodes_total, 1 | num_classes]
         h = self.h(x)
-        # [num_nodes_total, 1 | num_classes]
-        theta = self.theta(x)
+        if self.global_theta:
+            # [batch_size, embedding_dim] pooled embeddings for each graph
+            pooled = self.g(x, index=batch)
+            # [num_nodes_total, embedding_dim] pooled embeddings for the graph of each nodes
+            pooled = pooled[batch, :]
+            # [num_nodes_total, 1 | num_classes]
+            theta = self.theta(torch.cat((x, pooled), dim=-1))
+        else:
+            # [num_nodes_total, 1 | num_classes]
+            theta = self.theta(x)
         # [batch_size, num_classes]
         x = self.g(x=h * theta, index=batch)
-
         return x

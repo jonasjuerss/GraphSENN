@@ -100,6 +100,9 @@ if __name__ == "__main__":
     parser.add_argument('--per_class_theta', default=True, action=argparse.BooleanOptionalAction,
                         help="Whether to use a different concept weight theta per class (this is what SENN does) or the"
                              " same one for all.")
+    parser.add_argument('--global_theta', default=True, action=argparse.BooleanOptionalAction,
+                        help="Whether to generate theta globally, i.e. concatenate a globally pooled embedding to the "
+                             "node embedding when generating theta.")  # This ressembles an attention mechanism
 
     # No SENN
     parser.add_argument('--out_sizes', type=int, nargs='*',
@@ -155,7 +158,7 @@ if __name__ == "__main__":
 
     if args.senn_pooling:
         pool = GraphSENNPool(args.gnn_sizes[-1], dataset.num_classes, args.theta_sizes, args.h_sizes, args.aggregation,
-                             args.per_class_theta, args.per_class_h)
+                             args.per_class_theta, args.per_class_h, args.global_theta)
     else:
         pool = StandardPoolingLayer(args.gnn_sizes[-1], dataset.num_classes, args.out_sizes, args.aggregation)
 
