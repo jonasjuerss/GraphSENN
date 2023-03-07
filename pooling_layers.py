@@ -84,23 +84,6 @@ class GraphSENNPool(PoolingLayer):
         self.g: Aggregation = getattr(torch_geometric.nn, f"{aggr}Aggregation")()
         self.num_classes = num_classes
 
-    def _calculate_output(self, x: torch.Tensor, batch: torch.Tensor) ->\
-            Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        # [num_nodes_total, 1 | num_classes]
-        h = self.h(x)
-        theta_in = x
-        if self.global_theta:
-            # [batch_size, embedding_dim] pooled embeddings for each graph
-            pooled = self.g(x, index=batch)
-            # [num_nodes_total, embedding_dim] pooled embeddings for the graph of each node
-            pooled = pooled[batch, :]
-            theta_in = torch.cat((x, pooled), dim=-1)
-        # [num_nodes_total, 1 | num_classes]
-        theta = self.theta(theta_in)
-
-        # [batch_size, num_classes]
-        return self.g(x=h * theta, index=batch), h, theta
-
 
     def calculate_stability_loss(self, model: GraphSENN, x: torch.Tensor, batch: torch.Tensor, edge_index: torch.Tensor,
                                  theta: torch.Tensor, batch_size: int):
@@ -145,47 +128,18 @@ class GraphSENNPool(PoolingLayer):
             start_index += num_nodes
         return accum_loss
 
-
-    def calculate_stability_loss_old(self, x: torch.Tensor, batch: torch.Tensor, out: torch.Tensor, h: torch.Tensor,
-                                  theta: torch.Tensor) -> torch.Tensor:
-        # The for-loops could/should be sped up with vmap
-        batch_size = out.shape[0]
-        embedding_dim = x.shape[1]
-        # if input: jacobian[i, j, k, l] is gradient of output[i, j] with respect to variable [k, l] in input
-        for sample in range(batch_size):
-            # [num_nodes, num_features]
-            x_sample = x[batch == sample]
-            num_nodes = x_sample.shape[0]  # number of nodes in the current graph
-
-            # [num_nodes, num_classes | 1, embedding_dim]
-            J_x_h = torch.empty(num_nodes, self.num_classes if self.per_class_h else 1, embedding_dim,
-                                device=custom_logger.device)
-            for node in range(num_nodes):
-                # [num_nodes, num_classes | 1] derivative of h
-                J_x_h[node, :, :] = jacobian(self.h, x_sample[node], create_graph=True, vectorize=True) # TODO check if faster without vectorize
-
-            # [num_classes | 1, num_classes | 1, embedding_dim] (first dim num_classes if per_class_h, second dim num_classes if per_class_theta)
-            # basically gives us the second/subtracted part of the robustness loss with two more dimensions for
-            # potentially different theta (as done in the original paper) and h (as added by us) networks.
-            # As those dimensions just stand for different networks, all we want to do is average over them
-            desired_derivatives = torch.matmul(theta[batch == sample].T[None, :, :], torch.transpose(J_x_h, 0, 1))
-
-            # obviously we could introduce a special case where we replace the scattered aggregation with e.g. sum to
-            # gain a small speedup
-            processing = lambda emb: self._calculate_output(emb, batch=torch.zeros(x_sample.shape[0], dtype=torch.long,
-                                                                                   device=custom_logger.device))[0]
-            # [1, num_classes, num_nodes, embedding_dim] (note that the 1 would be batch_size in regular call)
-            # where entry [0, i, j, k] is the derivative of the prediction for class i for x_sample w.r.t x_sample[j, k]
-            jacobian(processing, x_sample, create_graph=True, vectorize=True)
-
-            # obviously we could define self.theta_processing to use sum instead of scatter with only zero indices to speed this up
-            theta_processing = partial(self.theta_processing,
-                                       batch=torch.zeros(x_sample.shape[0], dtype=torch.long).to(custom_logger.device))
-            # [num_nodes, num_classes | 1, num_nodes, embedding_size] where entry [i, j, k, l] is
-            # gradient of theta[i, j] with respect to x_sample[k, l]
-            nabla_x_f = grad(outputs=out, inputs=x_sample, create_graph=True)[0]
-            J_x_h = grad(outputs=h, inputs=x_sample, create_graph=True)[0]
-            return torch.norm(nabla_x_f - theta.T @ J_x_h)
     def forward(self, x: torch.Tensor, batch: torch.Tensor) -> Tuple[torch.Tensor, Union[torch.Tensor, int]]:
-        out, h, theta = self._calculate_output(x, batch)
+        # [num_nodes_total, 1 | num_classes]
+        h = self.h(x)
+        theta_in = x
+        if self.global_theta:
+            # [batch_size, embedding_dim] pooled embeddings for each graph
+            pooled = self.g(x, index=batch)
+            # [num_nodes_total, embedding_dim] pooled embeddings for the graph of each node
+            pooled = pooled[batch, :]
+            theta_in = torch.cat((x, pooled), dim=-1)
+        # [num_nodes_total, 1 | num_classes]
+        theta = self.theta(theta_in)
+        # [batch_size, num_classes]
+        out = self.g(x=h * theta, index=batch)
         return out, theta
