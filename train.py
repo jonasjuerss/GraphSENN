@@ -26,6 +26,8 @@ def train_test_epoch(train: bool, model: GraphSENN, optimizer, loader: DataLoade
         model.eval()
     correct = 0
     sum_loss = 0
+    sum_class_loss = 0
+    sum_reg_loss = 0
     num_classes = model.output_dim
     class_counts = torch.zeros(num_classes)
     with nullcontext() if train else torch.no_grad():
@@ -35,12 +37,18 @@ def train_test_epoch(train: bool, model: GraphSENN, optimizer, loader: DataLoade
             if train:
                 optimizer.zero_grad()
 
-            out = model(data)
+            out, x_out, theta = model(data.x, data.edge_index, data.batch)
             target = data.y
             classification_loss = F.nll_loss(out, target)
-            loss = classification_loss  # + model.custom_losses(batch_size)
+            reg_loss = model.pooling_layer.calculate_stability_loss(model, data.x, data.batch, data.edge_index,
+                                                                    theta, batch_size)
+            loss = classification_loss + reg_loss
 
             sum_loss += batch_size * float(loss)
+            sum_class_loss += batch_size * classification_loss
+            # TODO change to more general additional_losses
+            sum_reg_loss += batch_size * reg_loss
+
             pred_classes = out.argmax(dim=1)
             correct += int((pred_classes == target).sum())
             class_counts += torch.bincount(pred_classes.detach(), minlength=num_classes).cpu()
@@ -55,6 +63,8 @@ def train_test_epoch(train: bool, model: GraphSENN, optimizer, loader: DataLoade
     if not train:
         distr_dict = {f"{mode}_percentage_class_{i}": class_counts[i] for i in range(num_classes)}
     log({f"{mode}_loss": sum_loss / dataset_len,
+         f"{mode}_class_loss": sum_class_loss / dataset_len,
+         f"{mode}_reg_loss": sum_reg_loss / dataset_len,
          f"{mode}_accuracy": correct / dataset_len, **distr_dict},
         step=epoch)
 
@@ -80,7 +90,7 @@ if __name__ == "__main__":
                         help='The layer sizes to use for the GNN.')
     parser.add_argument('--conv_type', type=str, default="GCNConv", choices=[c.__name__ for c in CONV_TYPES],
                         help='The type of graph convolution to use.')
-    parser.add_argument('--gnn_activation', type=str, default="leaky_relu",
+    parser.add_argument('--gnn_activation', type=str, default="LeakyReLU",
                         help='Activation function to be used in between the GNN layers')
     parser.add_argument('--aggregation', type=str, default="Sum", choices=["Sum", "Mean", "Max", "Min", "Mul", "Var",
                                                                            "Std", "Softmax", "PowerMean"],
@@ -102,7 +112,9 @@ if __name__ == "__main__":
                              " same one for all.")
     parser.add_argument('--global_theta', default=True, action=argparse.BooleanOptionalAction,
                         help="Whether to generate theta globally, i.e. concatenate a globally pooled embedding to the "
-                             "node embedding when generating theta.")  # This ressembles an attention mechanism
+                             "node embedding when generating theta.")  # This reassembles an attention mechanism
+    parser.add_argument('--theta_loss_weight', type=float, default=0.5,
+                        help='The weight lambda of the theta regularization loss.')
 
     # No SENN
     parser.add_argument('--out_sizes', type=int, nargs='*',
@@ -139,6 +151,7 @@ if __name__ == "__main__":
     args = custom_logger.init(args)
 
     device = torch.device(args.device)
+    custom_logger.device = device
     torch.manual_seed(args.seed)
 
     dataset = datasets.datasets[args.dataset]
@@ -154,11 +167,11 @@ if __name__ == "__main__":
     conv_type = next((x for x in CONV_TYPES if x.__name__ == args.conv_type), None)
     if conv_type is None:
         raise ValueError(f"No convolution type named \"{args.conv_type}\" found!")
-    gnn_activation = getattr(torch.nn.functional, args.gnn_activation)
+    gnn_activation = getattr(torch.nn, args.gnn_activation)
 
     if args.senn_pooling:
         pool = GraphSENNPool(args.gnn_sizes[-1], dataset.num_classes, args.theta_sizes, args.h_sizes, args.aggregation,
-                             args.per_class_theta, args.per_class_h, args.global_theta)
+                             args.per_class_theta, args.per_class_h, args.global_theta, args.theta_loss_weight)
     else:
         pool = StandardPoolingLayer(args.gnn_sizes[-1], dataset.num_classes, args.out_sizes, args.aggregation)
 

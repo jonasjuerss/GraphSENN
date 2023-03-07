@@ -1,7 +1,8 @@
-from typing import List, Type
+from typing import List, Type, Tuple
 
 import torch
 import torch.nn.functional as F
+import torch_geometric
 from torch_geometric.data import Data
 
 from pooling_layers import PoolingLayer
@@ -13,19 +14,28 @@ class GraphSENN(torch.nn.Module):
         super().__init__()
         self.activation = gnn_activation
         layer_sizes = [input_dim] + gnn_sizes
-        self.gcn_layers = torch.nn.ModuleList([
-            layer_type(in_channels=layer_sizes[i], out_channels=layer_sizes[i+1], **gnn_layer_kwargs)
-            for i in range(len(layer_sizes) - 1)])
+        gnn_layers = []
+        for i in range(len(layer_sizes) - 2):
+            gnn_layers.append((layer_type(in_channels=layer_sizes[i], out_channels=layer_sizes[i+1], **gnn_layer_kwargs),
+                               'x, edge_index -> x'))
+            gnn_layers.append((self.activation(), 'x -> x'))
+        gnn_layers.append((layer_type(in_channels=layer_sizes[-2], out_channels=layer_sizes[-1], **gnn_layer_kwargs),
+                           'x, edge_index -> x'))
+        self.gnn_part = torch_geometric.nn.Sequential('x, edge_index, batch', gnn_layers)
         self.output_dim = output_dim
         self.pooling_layer = pooling_layer
         self.output_layer = torch.nn.Linear(layer_sizes[-1], output_dim)
 
-    def forward(self, data: Data):
-        x, edge_index, batch = data.x, data.edge_index, data.batch
-        for layer in self.gcn_layers[:-1]:
-            x = self.activation(layer(x=x, edge_index=edge_index))
-        #
-        x = self.gcn_layers[-1](x=x, edge_index=edge_index)
-        # [batch_size, layer_sizes[-1]]
-        x = self.pooling_layer(x, batch)
-        return F.log_softmax(x, dim=-1)
+    def forward(self, x: torch.Tensor, edge_index: torch.Tensor, batch: torch.Tensor) ->\
+            Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+
+        :param data:
+        :return:
+            x: [batch_size, num_classes] log_softmax predictions of the classes
+            reg_loss: additional regularization loss
+        """
+        x = self.gnn_part(x, edge_index, batch)
+        # [batch_size, num_classes]
+        x_out, theta = self.pooling_layer(x, batch)
+        return F.log_softmax(x_out, dim=-1), x, theta
