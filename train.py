@@ -1,11 +1,15 @@
 import argparse
 import json
+import os.path
 import typing
 from contextlib import nullcontext
+from datetime import datetime
+from pathlib import Path
 
 import numpy as np
 import torch
 import torch.nn.functional as F
+import wandb
 from torch_geometric.loader import DataLoader, DenseDataLoader
 from torch_geometric.nn import GCNConv
 from tqdm import tqdm
@@ -134,9 +138,17 @@ if __name__ == "__main__":
                         help='The device to train on. Allows to use CPU or different GPUs.')
     parser.add_argument('--seed', type=int, default=1,
                         help='The seed used for pytorch. This also determines the dataset if generated randomly.')
+    parser.add_argument('--resume', type=str, default=None,
+                        help='Will load configuration from the given wandb run and load the locally stored weights.')
 
 
     # Logging
+    parser.add_argument('--save_freq', type=int, default=50,
+                        help='Every how many epochs to save the model. Set to -1 to disable saving to a file. The '
+                             'last checkpoint will always be overwritten with the current one.')
+    parser.add_argument('--save_path', type=str,
+                        default=os.path.join("models", datetime.now().strftime("%d-%m-%Y_%H-%M-%S") + ".pt"),
+                        help='The path to save the checkpoint to. Will be models/dd-mm-YY_HH-MM-SS.pt by default.')
     parser.add_argument('--graph_log_freq', type=int, default=50,
                         help='Every how many epochs to log graphs to wandb. The final predictions will always be '
                              'logged, except for if this is negative.')
@@ -148,6 +160,14 @@ if __name__ == "__main__":
 
 
     args = parser.parse_args()
+    if args.resume is not None:
+        api = wandb.Api()
+        run = api.run("jonas-juerss/graph-senn/" + args.resume)
+        save_path = args.save_path
+        args = run.config
+        restore_path = args["save_path"]
+        args["save_path"] = save_path
+
     args = custom_logger.init(args)
 
     device = torch.device(args.device)
@@ -177,13 +197,17 @@ if __name__ == "__main__":
 
 
     model = GraphSENN(args.gnn_sizes, dataset.num_node_features, dataset.num_classes, conv_type, gnn_activation, pool).to(device)
-
+    if args.resume is not None:
+        model.load_state_dict(torch.load(restore_path))
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.wd)
 
+    os.makedirs(os.path.dirname(args.save_path), exist_ok=True)
     for epoch in tqdm(range(args.num_epochs)):
         train_test_epoch(True, model, optimizer, train_loader, epoch)
         if epoch % args.graph_log_freq == 0:
             pass
+        if epoch % args.save_freq == 0:
+            torch.save(model.state_dict(), args.save_path)
         train_test_epoch(False, model, optimizer, test_loader, epoch)
 
     if args.graph_log_freq >= 0:
