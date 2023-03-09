@@ -13,6 +13,7 @@ class GraphSENN(torch.nn.Module):
                  gnn_activation, pooling_layer: PoolingLayer, **gnn_layer_kwargs):
         super().__init__()
         self.activation = gnn_activation
+        self.input_dim = input_dim
         layer_sizes = [input_dim] + gnn_sizes
         gnn_layers = []
         for i in range(len(layer_sizes) - 2):
@@ -27,7 +28,7 @@ class GraphSENN(torch.nn.Module):
         self.output_layer = torch.nn.Linear(layer_sizes[-1], output_dim)
 
     def forward(self, x: torch.Tensor, edge_index: torch.Tensor, batch: torch.Tensor) ->\
-            Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+            Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
 
         :param data:
@@ -37,5 +38,5 @@ class GraphSENN(torch.nn.Module):
         """
         x = self.gnn_part(x, edge_index, batch)
         # [batch_size, num_classes]
-        x_out, theta = self.pooling_layer(x, batch)
-        return F.log_softmax(x_out, dim=-1), x, theta
+        x_out, theta, h = self.pooling_layer(x, batch)
+        return F.log_softmax(x_out, dim=-1), x, theta, h

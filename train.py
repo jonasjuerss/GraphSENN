@@ -6,6 +6,7 @@ from contextlib import nullcontext
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Tuple, Any
 
 import numpy as np
 import torch
@@ -41,7 +42,7 @@ def train_test_epoch(train: bool, model: GraphSENN, optimizer, loader: DataLoade
             if train:
                 optimizer.zero_grad()
 
-            out, x_out, theta = model(data.x, data.edge_index, data.batch)
+            out, x_out, theta, h = model(data.x, data.edge_index, data.batch)
             target = data.y
             classification_loss = F.nll_loss(out, target)
             reg_loss = model.pooling_layer.calculate_stability_loss(model, data.x, data.batch, data.edge_index,
@@ -72,12 +73,15 @@ def train_test_epoch(train: bool, model: GraphSENN, optimizer, loader: DataLoade
          f"{mode}_accuracy": correct / dataset_len, **distr_dict},
         step=epoch)
 
-def main(args, **kwargs) -> typing.Tuple[GraphSENN, DataLoader, DataLoader]:
+def main(args, **kwargs) -> tuple[GraphSENN, Any, DataLoader, DataLoader]:
     """
     :param args: The configuration as defined by the commandline arguments
     :param kwargs: additional kwargs to overwrite a loaded config with
     :return: The loaded/trained model, train and test data
     """
+    if not isinstance(args, dict):
+        args = args.__dict__
+
     if args["resume"] is not None:
         api = wandb.Api()
         run = api.run("jonas-juerss/graph-senn/" + args["resume"])
@@ -97,7 +101,7 @@ def main(args, **kwargs) -> typing.Tuple[GraphSENN, DataLoader, DataLoader]:
     custom_logger.device = device
     torch.manual_seed(args.seed)
 
-    dataset = datasets.datasets[args.dataset]
+    dataset = datasets.from_name(args.dataset).dataset
     num_train_samples = int(args.train_split * len(dataset))
     train_data = dataset[:num_train_samples]
     test_data = dataset[num_train_samples:]
@@ -136,7 +140,7 @@ def main(args, **kwargs) -> typing.Tuple[GraphSENN, DataLoader, DataLoader]:
 
     if args.graph_log_freq >= 0:
         pass
-    return model, train_loader, test_loader
+    return model, args, train_loader, test_loader
 
 
 if __name__ == "__main__":
@@ -169,9 +173,9 @@ if __name__ == "__main__":
 
     # SENN
     parser.add_argument('--h_sizes', type=int, nargs='*',
-                        default=[128, 2], dest='h_sizes',
+                        default=[128, 1], dest='h_sizes',
                         help='The layer sizes to use for the h network. Can be empty for identity (of last embedding).')
-    parser.add_argument('--per_class_h', default=True, action=argparse.BooleanOptionalAction,
+    parser.add_argument('--per_class_h', default=False, action=argparse.BooleanOptionalAction,
                         help="Whether to use a different concept scalar h per class or the same one for all.")
     parser.add_argument('--theta_sizes', type=int, nargs='*',
                         default=[128, 2], dest='theta_sizes',
@@ -208,7 +212,7 @@ if __name__ == "__main__":
 
 
     # Logging
-    parser.add_argument('--save_freq', type=int, default=50,
+    parser.add_argument('--save_freq', type=int, default=10,
                         help='Every how many epochs to save the model. Set to -1 to disable saving to a file. The '
                              'last checkpoint will always be overwritten with the current one.')
     parser.add_argument('--save_path', type=str,

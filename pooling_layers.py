@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import abc
 from functools import partial
-from typing import List, Tuple, Union
+from typing import List, Tuple, Union, Optional
 from typing import TYPE_CHECKING
 
 import torch
@@ -32,7 +32,8 @@ def mlp_from_sizes(sizes: List[int], activation=nn.ReLU) -> nn.Sequential:
 
 class PoolingLayer(torch.nn.Module, abc.ABC):
     @abc.abstractmethod
-    def forward(self, x: torch.Tensor, batch: torch.Tensor) -> Tuple[torch.Tensor, Union[torch.Tensor, int]]:
+    def forward(self, x: torch.Tensor, batch: torch.Tensor) ->\
+            Tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]]:
         """
         :param x: [num_nodes_total, embedding_dim]
         :param (batch): [num_nodes_total] (assignment of nodes to their batch element)
@@ -53,9 +54,10 @@ class StandardPoolingLayer(PoolingLayer):
         self.out = mlp_from_sizes(output_sizes)
 
 
-    def forward(self, x: torch.Tensor, batch: torch.Tensor) -> Tuple[torch.Tensor, Union[torch.Tensor, int]]:
+    def forward(self, x: torch.Tensor, batch: torch.Tensor) ->\
+            Tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]]:
         # [batch_size, num_classes]
-        return self.out(self.aggr(x=x, index=batch)), 0
+        return self.out(self.aggr(x=x, index=batch)), None, None
 class GraphSENNPool(PoolingLayer):
     def __init__(self, input_dim: int, num_classes: int, theta_sizes: List[int], h_sizes: List[int], aggr: str,
                  per_class_theta: bool, per_class_h: bool, global_theta: bool, theta_loss_weight: float):
@@ -128,7 +130,8 @@ class GraphSENNPool(PoolingLayer):
             start_index += num_nodes
         return accum_loss
 
-    def forward(self, x: torch.Tensor, batch: torch.Tensor) -> Tuple[torch.Tensor, Union[torch.Tensor, int]]:
+    def forward(self, x: torch.Tensor, batch: torch.Tensor) ->\
+            Tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]]:
         # [num_nodes_total, 1 | num_classes]
         h = self.h(x)
         theta_in = x
@@ -142,4 +145,4 @@ class GraphSENNPool(PoolingLayer):
         theta = self.theta(theta_in)
         # [batch_size, num_classes]
         out = self.g(x=h * theta, index=batch)
-        return out, theta
+        return out, theta, h
