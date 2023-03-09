@@ -5,6 +5,7 @@ import typing
 from contextlib import nullcontext
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import torch
@@ -20,7 +21,6 @@ from custom_logger import log
 from graph_senn import GraphSENN
 from pooling_layers import StandardPoolingLayer, GraphSENNPool
 
-device = None
 CONV_TYPES = [GCNConv]
 
 def train_test_epoch(train: bool, model: GraphSENN, optimizer, loader: DataLoader, epoch: int):
@@ -36,7 +36,7 @@ def train_test_epoch(train: bool, model: GraphSENN, optimizer, loader: DataLoade
     class_counts = torch.zeros(num_classes)
     with nullcontext() if train else torch.no_grad():
         for data in loader:
-            data = data.to(device)
+            data = data.to(custom_logger.device)
             batch_size = data.y.size(0)
             if train:
                 optimizer.zero_grad()
@@ -72,6 +72,71 @@ def train_test_epoch(train: bool, model: GraphSENN, optimizer, loader: DataLoade
          f"{mode}_accuracy": correct / dataset_len, **distr_dict},
         step=epoch)
 
+def main(args, **kwargs) -> typing.Tuple[GraphSENN, DataLoader, DataLoader]:
+    """
+    :param args: The configuration as defined by the commandline arguments
+    :param kwargs: additional kwargs to overwrite a loaded config with
+    :return: The loaded/trained model, train and test data
+    """
+    if args["resume"] is not None:
+        api = wandb.Api()
+        run = api.run("jonas-juerss/graph-senn/" + args["resume"])
+        save_path = args["save_path"]
+        args = run.config
+        restore_path = args["save_path"]
+        args["save_path"] = save_path
+        for k, v in kwargs.items():
+            args[k] = v
+
+    if isinstance(args, dict):
+        args = SimpleNamespace(**args)
+
+    args = custom_logger.init(args)
+
+    device = torch.device(args.device)
+    custom_logger.device = device
+    torch.manual_seed(args.seed)
+
+    dataset = datasets.datasets[args.dataset]
+    num_train_samples = int(args.train_split * len(dataset))
+    train_data = dataset[:num_train_samples]
+    test_data = dataset[num_train_samples:]
+    graphs_to_log = train_data[:args.graphs_to_log] + test_data[:args.graphs_to_log]
+
+    train_loader = DataLoader(train_data, batch_size=args.batch_size, shuffle=True)
+    test_loader = DataLoader(test_data, batch_size=args.batch_size, shuffle=True)
+    log_graph_loader = DataLoader(graphs_to_log, batch_size=1, shuffle=False)
+
+    conv_type = next((x for x in CONV_TYPES if x.__name__ == args.conv_type), None)
+    if conv_type is None:
+        raise ValueError(f"No convolution type named \"{args.conv_type}\" found!")
+    gnn_activation = getattr(torch.nn, args.gnn_activation)
+
+    if args.senn_pooling:
+        pool = GraphSENNPool(args.gnn_sizes[-1], dataset.num_classes, args.theta_sizes, args.h_sizes, args.aggregation,
+                             args.per_class_theta, args.per_class_h, args.global_theta, args.theta_loss_weight)
+    else:
+        pool = StandardPoolingLayer(args.gnn_sizes[-1], dataset.num_classes, args.out_sizes, args.aggregation)
+
+
+    model = GraphSENN(args.gnn_sizes, dataset.num_node_features, dataset.num_classes, conv_type, gnn_activation, pool)
+    if args.resume is not None:
+        model.load_state_dict(torch.load(restore_path))
+    model = model.to(device)
+    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.wd)
+
+    os.makedirs(os.path.dirname(args.save_path), exist_ok=True)
+    for epoch in tqdm(range(args.num_epochs)):
+        train_test_epoch(True, model, optimizer, train_loader, epoch)
+        if epoch % args.graph_log_freq == 0:
+            pass
+        if epoch % args.save_freq == 0:
+            torch.save(model.state_dict(), args.save_path)
+        train_test_epoch(False, model, optimizer, test_loader, epoch)
+
+    if args.graph_log_freq >= 0:
+        pass
+    return model, train_loader, test_loader
 
 
 if __name__ == "__main__":
@@ -158,58 +223,6 @@ if __name__ == "__main__":
     parser.add_argument('--no_wandb', action='store_false', dest='use_wandb',
                         help='Turns off logging to wandb')
 
-
     args = parser.parse_args()
-    if args.resume is not None:
-        api = wandb.Api()
-        run = api.run("jonas-juerss/graph-senn/" + args.resume)
-        save_path = args.save_path
-        args = run.config
-        restore_path = args["save_path"]
-        args["save_path"] = save_path
-
-    args = custom_logger.init(args)
-
-    device = torch.device(args.device)
-    custom_logger.device = device
-    torch.manual_seed(args.seed)
-
-    dataset = datasets.datasets[args.dataset]
-    num_train_samples = int(args.train_split * len(dataset))
-    train_data = dataset[:num_train_samples]
-    test_data = dataset[num_train_samples:]
-    graphs_to_log = train_data[:args.graphs_to_log] + test_data[:args.graphs_to_log]
-
-    train_loader = DataLoader(train_data, batch_size=args.batch_size, shuffle=True)
-    test_loader = DataLoader(test_data, batch_size=args.batch_size, shuffle=True)
-    log_graph_loader = DataLoader(graphs_to_log, batch_size=1, shuffle=False)
-
-    conv_type = next((x for x in CONV_TYPES if x.__name__ == args.conv_type), None)
-    if conv_type is None:
-        raise ValueError(f"No convolution type named \"{args.conv_type}\" found!")
-    gnn_activation = getattr(torch.nn, args.gnn_activation)
-
-    if args.senn_pooling:
-        pool = GraphSENNPool(args.gnn_sizes[-1], dataset.num_classes, args.theta_sizes, args.h_sizes, args.aggregation,
-                             args.per_class_theta, args.per_class_h, args.global_theta, args.theta_loss_weight)
-    else:
-        pool = StandardPoolingLayer(args.gnn_sizes[-1], dataset.num_classes, args.out_sizes, args.aggregation)
-
-
-    model = GraphSENN(args.gnn_sizes, dataset.num_node_features, dataset.num_classes, conv_type, gnn_activation, pool).to(device)
-    if args.resume is not None:
-        model.load_state_dict(torch.load(restore_path))
-    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.wd)
-
-    os.makedirs(os.path.dirname(args.save_path), exist_ok=True)
-    for epoch in tqdm(range(args.num_epochs)):
-        train_test_epoch(True, model, optimizer, train_loader, epoch)
-        if epoch % args.graph_log_freq == 0:
-            pass
-        if epoch % args.save_freq == 0:
-            torch.save(model.state_dict(), args.save_path)
-        train_test_epoch(False, model, optimizer, test_loader, epoch)
-
-    if args.graph_log_freq >= 0:
-        pass
+    main(args)
 
