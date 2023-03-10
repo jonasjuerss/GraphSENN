@@ -20,8 +20,11 @@ class GraphSENN(torch.nn.Module):
             gnn_layers.append((layer_type(in_channels=layer_sizes[i], out_channels=layer_sizes[i+1], **gnn_layer_kwargs),
                                'x, edge_index -> x'))
             gnn_layers.append((self.activation(), 'x -> x'))
-        gnn_layers.append((layer_type(in_channels=layer_sizes[-2], out_channels=layer_sizes[-1], **gnn_layer_kwargs),
-                           'x, edge_index -> x'))
+        if len(layer_sizes) > 1:
+            gnn_layers.append((layer_type(in_channels=layer_sizes[-2], out_channels=layer_sizes[-1], **gnn_layer_kwargs),
+                               'x, edge_index -> x'))
+        else:
+            gnn_layers = [(torch.nn.Identity(), 'x -> x')]
         self.gnn_part = torch_geometric.nn.Sequential('x, edge_index, batch', gnn_layers)
         self.output_dim = output_dim
         self.pooling_layer = pooling_layer

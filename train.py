@@ -116,11 +116,12 @@ def main(args, **kwargs) -> tuple[GraphSENN, Any, DataLoader, DataLoader]:
         raise ValueError(f"No convolution type named \"{args.conv_type}\" found!")
     gnn_activation = getattr(torch.nn, args.gnn_activation)
 
+    gnn_output_size = args.gnn_sizes[-1] if args.gnn_sizes else num_node_features
     if args.senn_pooling:
-        pool = GraphSENNPool(args.gnn_sizes[-1], num_classes, args.theta_sizes, args.h_sizes, args.aggregation,
+        pool = GraphSENNPool(gnn_output_size, num_classes, args.theta_sizes, args.h_sizes, args.aggregation,
                              args.per_class_theta, args.per_class_h, args.global_theta, args.theta_loss_weight)
     else:
-        pool = StandardPoolingLayer(args.gnn_sizes[-1], num_classes, args.out_sizes, args.aggregation)
+        pool = StandardPoolingLayer(gnn_output_size, num_classes, args.out_sizes, args.aggregation)
 
 
     model = GraphSENN(args.gnn_sizes, num_node_features, num_classes, conv_type, gnn_activation, pool)
