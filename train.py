@@ -4,6 +4,7 @@ from contextlib import nullcontext
 from datetime import datetime
 from types import SimpleNamespace
 from typing import Any
+import re
 
 import torch
 import torch.nn.functional as F
@@ -97,7 +98,10 @@ def main(args, **kwargs) -> tuple[GraphSENN, Any, DataLoader, DataLoader]:
     custom_logger.device = device
     torch.manual_seed(args.seed)
 
-    dataset = datasets.from_name(args.dataset).dataset
+    data_wrapper = datasets.from_name(args.dataset)
+    dataset = data_wrapper.dataset
+    num_classes = data_wrapper.num_classes
+    num_node_features = data_wrapper.num_node_features
     num_train_samples = int(args.train_split * len(dataset))
     train_data = dataset[:num_train_samples]
     test_data = dataset[num_train_samples:]
@@ -113,13 +117,13 @@ def main(args, **kwargs) -> tuple[GraphSENN, Any, DataLoader, DataLoader]:
     gnn_activation = getattr(torch.nn, args.gnn_activation)
 
     if args.senn_pooling:
-        pool = GraphSENNPool(args.gnn_sizes[-1], dataset.num_classes, args.theta_sizes, args.h_sizes, args.aggregation,
+        pool = GraphSENNPool(args.gnn_sizes[-1], num_classes, args.theta_sizes, args.h_sizes, args.aggregation,
                              args.per_class_theta, args.per_class_h, args.global_theta, args.theta_loss_weight)
     else:
-        pool = StandardPoolingLayer(args.gnn_sizes[-1], dataset.num_classes, args.out_sizes, args.aggregation)
+        pool = StandardPoolingLayer(args.gnn_sizes[-1], num_classes, args.out_sizes, args.aggregation)
 
 
-    model = GraphSENN(args.gnn_sizes, dataset.num_node_features, dataset.num_classes, conv_type, gnn_activation, pool)
+    model = GraphSENN(args.gnn_sizes, num_node_features, num_classes, conv_type, gnn_activation, pool)
     if args.resume is not None:
         model.load_state_dict(torch.load(restore_path))
     model = model.to(device)
@@ -154,7 +158,7 @@ if __name__ == "__main__":
 
 
     # Architecture
-    parser.add_argument('--gnn_sizes', type=int, nargs='+',
+    parser.add_argument('--gnn_sizes', type=int, nargs='*',
                         default=[32, 32, 32, 32, 32], dest='gnn_sizes',
                         help='The layer sizes to use for the GNN.')
     parser.add_argument('--conv_type', type=str, default="GCNConv", choices=[c.__name__ for c in CONV_TYPES],
@@ -174,7 +178,7 @@ if __name__ == "__main__":
     parser.add_argument('--per_class_h', default=False, action=argparse.BooleanOptionalAction,
                         help="Whether to use a different concept scalar h per class or the same one for all.")
     parser.add_argument('--theta_sizes', type=int, nargs='*',
-                        default=[128, 2], dest='theta_sizes',
+                        default=[128, 4], dest='theta_sizes',
                         help='The layer sizes to use for theta network. Can be empty for identity (of last embedding).')
     parser.add_argument('--per_class_theta', default=True, action=argparse.BooleanOptionalAction,
                         help="Whether to use a different concept weight theta per class (this is what SENN does) or the"
@@ -192,7 +196,8 @@ if __name__ == "__main__":
 
 
     # Dataset
-    parser.add_argument('--dataset', type=str, default="MUTAG", choices=[d.__name__.upper()[:-7] for d in datasets.__all__],
+    parser.add_argument('--dataset', type=str, default="MUTAG", choices=[re.sub(r'(?<!^)(?=[A-Z])', '-', d.__name__[:-7]).\
+                        upper() for d in datasets.__all__],
                         help='The name of the dataset to use as defined in datasets.py')
     parser.add_argument('--train_split', type=float, default=0.7,
                         help='The part of the dataset to use as train set (in (0, 1)).')
