@@ -1,6 +1,7 @@
 import abc
 
 import numpy as np
+import torch_geometric
 from torch_geometric.datasets import TUDataset
 
 
@@ -40,8 +41,12 @@ class EnzymesWrapper(DatasetWrapper):
     def __init__(self):
         super().__init__(TUDataset(root='/tmp', name='ENZYMES'))
 
+class RedditBinaryWrapper(DatasetWrapper):
+    def __init__(self):
+        super().__init__(TUDataset(root='/tmp', name='REDDIT-BINARY', transform=torch_geometric.transforms.Constant()))
 
-__all__ = [MutagWrapper, EnzymesWrapper]
+
+__all__ = [MutagWrapper, EnzymesWrapper, RedditBinaryWrapper]
 
 
 def from_name(name: str):

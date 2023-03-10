@@ -1,18 +1,14 @@
 import argparse
-import json
 import os.path
-import typing
 from contextlib import nullcontext
 from datetime import datetime
-from pathlib import Path
 from types import SimpleNamespace
-from typing import Tuple, Any
+from typing import Any
 
-import numpy as np
 import torch
 import torch.nn.functional as F
 import wandb
-from torch_geometric.loader import DataLoader, DenseDataLoader
+from torch_geometric.loader import DataLoader
 from torch_geometric.nn import GCNConv
 from tqdm import tqdm
 
@@ -183,7 +179,7 @@ if __name__ == "__main__":
     parser.add_argument('--per_class_theta', default=True, action=argparse.BooleanOptionalAction,
                         help="Whether to use a different concept weight theta per class (this is what SENN does) or the"
                              " same one for all.")
-    parser.add_argument('--global_theta', default=True, action=argparse.BooleanOptionalAction,
+    parser.add_argument('--global_theta', default=False, action=argparse.BooleanOptionalAction,
                         help="Whether to generate theta globally, i.e. concatenate a globally pooled embedding to the "
                              "node embedding when generating theta.")  # This reassembles an attention mechanism
     parser.add_argument('--theta_loss_weight', type=float, default=0.5,
@@ -196,7 +192,7 @@ if __name__ == "__main__":
 
 
     # Dataset
-    parser.add_argument('--dataset', type=str, default="MUTAG", choices=datasets.datasets.keys(),
+    parser.add_argument('--dataset', type=str, default="MUTAG", choices=[d.__name__.upper()[:-7] for d in datasets.__all__],
                         help='The name of the dataset to use as defined in datasets.py')
     parser.add_argument('--train_split', type=float, default=0.7,
                         help='The part of the dataset to use as train set (in (0, 1)).')
