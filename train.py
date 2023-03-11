@@ -21,7 +21,7 @@ from pooling_layers import StandardPoolingLayer, GraphSENNPool
 
 CONV_TYPES = [GCNConv]
 
-def train_test_epoch(train: bool, model: GraphSENN, optimizer, loader: DataLoader, epoch: int):
+def train_test_epoch(train: bool, model: GraphSENN, optimizer, loader: DataLoader, epoch: int, mode_str: str):
     if train:
         model.train()
     else:
@@ -59,16 +59,17 @@ def train_test_epoch(train: bool, model: GraphSENN, optimizer, loader: DataLoade
                 loss.backward()
                 optimizer.step()
     dataset_len = len(loader.dataset)
-    mode = "train" if train else "test"
     distr_dict = {}
     class_counts /= dataset_len
-    if not train:
-        distr_dict = {f"{mode}_percentage_class_{i}": class_counts[i] for i in range(num_classes)}
-    log({f"{mode}_loss": sum_loss / dataset_len,
-         f"{mode}_class_loss": sum_class_loss / dataset_len,
-         f"{mode}_reg_loss": sum_reg_loss / dataset_len,
-         f"{mode}_accuracy": correct / dataset_len, **distr_dict},
-        step=epoch)
+    if mode_str == "test":
+        distr_dict = {f"{mode_str}_percentage_class_{i}": class_counts[i] for i in range(num_classes)}
+    res_dict = {
+        f"{mode_str}_loss": sum_loss / dataset_len,
+        f"{mode_str}_class_loss": sum_class_loss / dataset_len,
+        f"{mode_str}_reg_loss": sum_reg_loss / dataset_len,
+        f"{mode_str}_accuracy": correct / dataset_len, **distr_dict}
+    log(res_dict, step=epoch)
+    return res_dict
 
 def main(args, **kwargs) -> tuple[GraphSENN, Any, DataLoader, DataLoader]:
     """
@@ -103,11 +104,14 @@ def main(args, **kwargs) -> tuple[GraphSENN, Any, DataLoader, DataLoader]:
     num_classes = data_wrapper.num_classes
     num_node_features = data_wrapper.num_node_features
     num_train_samples = int(args.train_split * len(dataset))
+    num_val_samples = int(args.val_split * len(dataset))
     train_data = dataset[:num_train_samples]
-    test_data = dataset[num_train_samples:]
+    val_data = dataset[num_train_samples:num_train_samples+num_val_samples]
+    test_data = dataset[num_train_samples + num_val_samples:]
     graphs_to_log = train_data[:args.graphs_to_log] + test_data[:args.graphs_to_log]
 
     train_loader = DataLoader(train_data, batch_size=args.batch_size, shuffle=True)
+    val_loader = DataLoader(val_data, batch_size=args.batch_size, shuffle=True)
     test_loader = DataLoader(test_data, batch_size=args.batch_size, shuffle=True)
     log_graph_loader = DataLoader(graphs_to_log, batch_size=1, shuffle=False)
 
@@ -131,13 +135,18 @@ def main(args, **kwargs) -> tuple[GraphSENN, Any, DataLoader, DataLoader]:
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.wd)
 
     os.makedirs(os.path.dirname(args.save_path), exist_ok=True)
+    best_val_acc = 0
     for epoch in tqdm(range(args.num_epochs)):
-        train_test_epoch(True, model, optimizer, train_loader, epoch)
+        train_test_epoch(True, model, optimizer, train_loader, epoch, "train")
+        train_test_epoch(False, model, optimizer, val_loader, epoch, "test")
+        val_acc = train_test_epoch(False, model, optimizer, test_loader, epoch, "val")["val_accuracy"]
         if epoch % args.graph_log_freq == 0:
             pass
-        if epoch % args.save_freq == 0:
+        if args.save_freq > 0 and epoch % args.save_freq == 0:
             torch.save(model.state_dict(), args.save_path)
-        train_test_epoch(False, model, optimizer, test_loader, epoch)
+        elif args.save_freq == -2 and val_acc > best_val_acc:
+            best_val_acc = val_acc
+            torch.save(model.state_dict(), args.save_path)
 
     if args.graph_log_freq >= 0:
         pass
@@ -202,6 +211,8 @@ if __name__ == "__main__":
                         help='The name of the dataset to use as defined in datasets.py')
     parser.add_argument('--train_split', type=float, default=0.7,
                         help='The part of the dataset to use as train set (in (0, 1)).')
+    parser.add_argument('--val_split', type=float, default=0.15,
+                        help='The part of the dataset to use as validation set (in (0, 1)).')
 
 
     # Setup
@@ -215,8 +226,9 @@ if __name__ == "__main__":
 
     # Logging
     parser.add_argument('--save_freq', type=int, default=10,
-                        help='Every how many epochs to save the model. Set to -1 to disable saving to a file. The '
-                             'last checkpoint will always be overwritten with the current one.')
+                        help='Every how many epochs to save the model. Set to -1 to disable saving to a file and to -2 '
+                             'to save whenever validation accuracy improved. The  last checkpoint will always be '
+                             'overwritten with the current one.')
     parser.add_argument('--save_path', type=str,
                         default=os.path.join("models", datetime.now().strftime("%d-%m-%Y_%H-%M-%S") + ".pt"),
                         help='The path to save the checkpoint to. Will be models/dd-mm-YY_HH-MM-SS.pt by default.')

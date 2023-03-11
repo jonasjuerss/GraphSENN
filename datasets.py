@@ -57,12 +57,29 @@ class RedditBinaryWrapper(DatasetWrapper):
         super().__init__(dataset, dataset.num_classes, dataset.num_node_features)
 
 class UniqueMotifWrapper(DatasetWrapper):
-    def __init__(self, num_samples=2000, num_colors=3):
+    def __init__(self, num_samples=2000, num_colors=2):
         sampler = UniqueMotifCategorizationDataset(BinaryTreeMotif(5, [0], num_colors),
                                                    [HouseMotif([1], [1], num_colors),
                                                     FullyConnectedMotif(5, [1], num_colors)],
                                                    [[0.4, 0.6], [0.4, 0.6]])
         super().__init__([sampler.sample() for _ in range(num_samples)], sampler.num_classes, sampler.num_node_features)
+        self.color_map = np.array(['#2c3e50', '#e74c3c'])
+
+    def get_node_colors(self, x: np.ndarray) -> np.ndarray:
+        return self.color_map[np.argmax(x, axis=-1)]
+
+
+class UniqueMotifEasyWrapper(DatasetWrapper):
+    def __init__(self, num_samples=2000, num_colors=3):
+        sampler = UniqueMotifCategorizationDataset(BinaryTreeMotif(5, [0], num_colors),
+                                                   [HouseMotif([1], [1], num_colors),
+                                                    FullyConnectedMotif(5, [2], num_colors)],
+                                                   [[0.4, 0.6], [0.4, 0.6]])
+        super().__init__([sampler.sample() for _ in range(num_samples)], sampler.num_classes, sampler.num_node_features)
+        self.color_map = np.array(['#2c3e50', '#e74c3c'])
+
+    def get_node_colors(self, x: np.ndarray) -> np.ndarray:
+        return self.color_map[np.argmax(x, axis=-1)]
 
 
 __all__ = [MutagWrapper, EnzymesWrapper, RedditBinaryWrapper, UniqueMotifWrapper]
