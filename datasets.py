@@ -1,4 +1,5 @@
 import abc
+from typing import Optional, List
 
 import numpy as np
 import torch_geometric
@@ -9,10 +10,16 @@ from motif_dataset.motifs import BinaryTreeMotif, HouseMotif, FullyConnectedMoti
 
 
 class DatasetWrapper(abc.ABC):
-    def __init__(self, dataset, num_classes: int, num_node_features: int):
+    def __init__(self, dataset, num_classes: int, num_node_features: int, class_names: Optional[List[str]] = None):
         self.dataset = dataset
         self.num_classes = num_classes
         self.num_node_features = num_node_features
+        if class_names is None:
+            self.class_names = [f"Class {i}" for i in range(num_classes)]
+        else:
+            if len(class_names) != num_classes:
+                raise ValueError(f"Got {len(class_names)} class names for {num_classes} classes!")
+            self.class_names = class_names
 
     def get_node_labels(self, x: np.ndarray) -> np.ndarray:
         """
@@ -32,7 +39,7 @@ class DatasetWrapper(abc.ABC):
 class MutagWrapper(DatasetWrapper):
     def __init__(self):
         dataset = TUDataset(root='/tmp', name='MUTAG')
-        super().__init__(dataset, dataset.num_classes, dataset.num_node_features)
+        super().__init__(dataset, dataset.num_classes, dataset.num_node_features, ["not mutagenic", "mutagenic"])
         self.label_map = np.array(['C', 'O', 'Cl', 'H', 'N', 'F', 'Br', 'S', 'P', 'I', 'Na', 'K', 'Li', 'Ca'])
         self.color_map = np.array(
             ['#2c3e50', '#e74c3c', '#27ae60', '#3498db', '#CDDC39', '#f39c12', '#795548', '#8e44ad', '#3F51B5',
@@ -62,7 +69,8 @@ class UniqueMotifWrapper(DatasetWrapper):
                                                    [HouseMotif([1], [1], num_colors),
                                                     FullyConnectedMotif(5, [1], num_colors)],
                                                    [[0.4, 0.6], [0.4, 0.6]])
-        super().__init__([sampler.sample() for _ in range(num_samples)], sampler.num_classes, sampler.num_node_features)
+        super().__init__([sampler.sample() for _ in range(num_samples)],
+                         sampler.num_classes, sampler.num_node_features, sampler.class_names)
         self.color_map = np.array(['#2c3e50', '#e74c3c'])
 
     def get_node_colors(self, x: np.ndarray) -> np.ndarray:
@@ -75,7 +83,8 @@ class UniqueMotifEasyWrapper(DatasetWrapper):
                                                    [HouseMotif([1], [1], num_colors),
                                                     FullyConnectedMotif(5, [2], num_colors)],
                                                    [[0.4, 0.6], [0.4, 0.6]])
-        super().__init__([sampler.sample() for _ in range(num_samples)], sampler.num_classes, sampler.num_node_features)
+        super().__init__([sampler.sample() for _ in range(num_samples)],
+                         sampler.num_classes, sampler.num_node_features, sampler.class_names)
         self.color_map = np.array(['#2c3e50', '#e74c3c'])
 
     def get_node_colors(self, x: np.ndarray) -> np.ndarray:
