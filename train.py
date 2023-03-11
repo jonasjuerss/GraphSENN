@@ -10,7 +10,7 @@ import torch
 import torch.nn.functional as F
 import wandb
 from torch_geometric.loader import DataLoader
-from torch_geometric.nn import GCNConv
+from torch_geometric.nn import GCNConv, GATConv
 from tqdm import tqdm
 
 import custom_logger
@@ -19,7 +19,7 @@ from custom_logger import log
 from graph_senn import GraphSENN
 from pooling_layers import StandardPoolingLayer, GraphSENNPool
 
-CONV_TYPES = [GCNConv]
+CONV_TYPES = [GCNConv, GATConv]
 
 def train_test_epoch(train: bool, model: GraphSENN, optimizer, loader: DataLoader, epoch: int, mode_str: str):
     if train:
@@ -30,6 +30,7 @@ def train_test_epoch(train: bool, model: GraphSENN, optimizer, loader: DataLoade
     sum_loss = 0
     sum_class_loss = 0
     sum_reg_loss = 0
+    sum_add_loss = {}
     num_classes = model.output_dim
     class_counts = torch.zeros(num_classes)
     with nullcontext() if train else torch.no_grad():
@@ -42,14 +43,17 @@ def train_test_epoch(train: bool, model: GraphSENN, optimizer, loader: DataLoade
             out, x_out, theta, h = model(data.x, data.edge_index, data.batch)
             target = data.y
             classification_loss = F.nll_loss(out, target)
-            reg_loss = model.pooling_layer.calculate_stability_loss(model, data.x, data.batch, data.edge_index,
-                                                                    theta, batch_size)
+            reg_loss, add_loss_dict = model.pooling_layer.calculate_additional_losses(model, data.x, data.batch,
+                                                                                      data.edge_index, theta, batch_size)
+
             loss = classification_loss + reg_loss
 
             sum_loss += batch_size * float(loss)
             sum_class_loss += batch_size * classification_loss
             # TODO change to more general additional_losses
             sum_reg_loss += batch_size * reg_loss
+            for k, v in add_loss_dict.items():
+                sum_add_loss[k] = sum_add_loss.get(k, 0) + v
 
             pred_classes = out.argmax(dim=1)
             correct += int((pred_classes == target).sum())
@@ -67,7 +71,9 @@ def train_test_epoch(train: bool, model: GraphSENN, optimizer, loader: DataLoade
         f"{mode_str}_loss": sum_loss / dataset_len,
         f"{mode_str}_class_loss": sum_class_loss / dataset_len,
         f"{mode_str}_reg_loss": sum_reg_loss / dataset_len,
-        f"{mode_str}_accuracy": correct / dataset_len, **distr_dict}
+        f"{mode_str}_accuracy": correct / dataset_len,
+        **{f"{mode_str}_{k}": v / dataset_len for k, v in sum_add_loss.items()},
+        **distr_dict}
     log(res_dict, step=epoch)
     return res_dict
 
@@ -171,7 +177,7 @@ if __name__ == "__main__":
     parser.add_argument('--gnn_sizes', type=int, nargs='*',
                         default=[32, 32, 32, 32, 32], dest='gnn_sizes',
                         help='The layer sizes to use for the GNN.')
-    parser.add_argument('--conv_type', type=str, default="GCNConv", choices=[c.__name__ for c in CONV_TYPES],
+    parser.add_argument('--conv_type', type=str, default="GATConv", choices=[c.__name__ for c in CONV_TYPES],
                         help='The type of graph convolution to use.')
     parser.add_argument('--gnn_activation', type=str, default="LeakyReLU",
                         help='Activation function to be used in between the GNN layers')
@@ -201,7 +207,7 @@ if __name__ == "__main__":
 
     # No SENN
     parser.add_argument('--out_sizes', type=int, nargs='*',
-                        default=[128, 128, 2], dest='out_sizes',
+                        default=[128, 4], dest='out_sizes',
                         help='The layer sizes to use for the network after aggregation when not using SENN.')
 
 

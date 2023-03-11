@@ -30,9 +30,10 @@ def mlp_from_sizes(sizes: List[int], activation=nn.ReLU) -> nn.Sequential:
     layers.append(nn.Linear(sizes[-2], sizes[-1]))
     return nn.Sequential(*layers)
 
+
 class PoolingLayer(torch.nn.Module, abc.ABC):
     @abc.abstractmethod
-    def forward(self, x: torch.Tensor, batch: torch.Tensor) ->\
+    def forward(self, x: torch.Tensor, batch: torch.Tensor) -> \
             Tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]]:
         """
         :param x: [num_nodes_total, embedding_dim]
@@ -42,6 +43,13 @@ class PoolingLayer(torch.nn.Module, abc.ABC):
             reg_loss: additional regularization loss
         """
         pass
+
+    @abc.abstractmethod
+    def calculate_additional_losses(self, model: GraphSENN, x: torch.Tensor, batch: torch.Tensor,
+                                    edge_index: torch.Tensor, theta: torch.Tensor, batch_size: int) ->\
+            Tuple[Union[torch.Tensor, int], dict]:
+        pass
+
 
 class StandardPoolingLayer(PoolingLayer):
     def __init__(self, input_dim: int, num_classes: int, output_sizes: List[int], aggr: str):
@@ -53,11 +61,16 @@ class StandardPoolingLayer(PoolingLayer):
                              f"classes {num_classes}!")
         self.out = mlp_from_sizes(output_sizes)
 
-
-    def forward(self, x: torch.Tensor, batch: torch.Tensor) ->\
+    def calculate_additional_losses(self, model: GraphSENN, x: torch.Tensor, batch: torch.Tensor,
+                                    edge_index: torch.Tensor, theta: torch.Tensor, batch_size: int) -> \
+            Tuple[Union[torch.Tensor, int], dict]:
+        return 0, {}
+    def forward(self, x: torch.Tensor, batch: torch.Tensor) -> \
             Tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]]:
         # [batch_size, num_classes]
         return self.out(self.aggr(x=x, index=batch)), None, None
+
+
 class GraphSENNPool(PoolingLayer):
     def __init__(self, input_dim: int, num_classes: int, theta_sizes: List[int], h_sizes: List[int], aggr: str,
                  per_class_theta: bool, per_class_h: bool, global_theta: bool, theta_loss_weight: float):
@@ -86,11 +99,8 @@ class GraphSENNPool(PoolingLayer):
         self.g: Aggregation = getattr(torch_geometric.nn, f"{aggr}Aggregation")()
         self.num_classes = num_classes
 
-
     def calculate_stability_loss(self, model: GraphSENN, x: torch.Tensor, batch: torch.Tensor, edge_index: torch.Tensor,
                                  theta: torch.Tensor, batch_size: int):
-        if self.theta_loss_weight == 0:
-            return 0
         accum_loss = 0
         start_index = 0
         for sample in range(batch_size):
@@ -109,7 +119,7 @@ class GraphSENNPool(PoolingLayer):
             h = lambda emb: self.h(model.gnn_part(emb, edge_index=edge_index_sample, batch=batch_sample))
             f = lambda emb: model(emb, edge_index_sample, batch_sample)[0]
             # [num_nodes, num_classes | 1, num_nodes * input_dim]
-            J_x_h = jacobian(h, x_sample, create_graph=True, vectorize=True)\
+            J_x_h = jacobian(h, x_sample, create_graph=True, vectorize=True) \
                 .reshape(num_nodes, -1, num_nodes * input_dim)
 
             # [num_classes | 1, 1, num_nodes] @ [num_classes | 1, num_nodes, num_nodes * input_dim]
@@ -130,7 +140,18 @@ class GraphSENNPool(PoolingLayer):
             start_index += num_nodes
         return accum_loss
 
-    def forward(self, x: torch.Tensor, batch: torch.Tensor) ->\
+    def calculate_additional_losses(self, model: GraphSENN, x: torch.Tensor, batch: torch.Tensor,
+                                    edge_index: torch.Tensor, theta: torch.Tensor, batch_size: int) -> \
+            Tuple[Union[torch.Tensor, int], dict]:
+        res_dict = {}
+        loss = 0
+        if self.theta_loss_weight != 0:
+            stability_loss = self.calculate_stability_loss(model, x, batch, edge_index, theta, batch_size)
+            loss += self.theta_loss_weight * stability_loss
+            res_dict["stability_loss"] = stability_loss.item()
+        return loss, res_dict
+
+    def forward(self, x: torch.Tensor, batch: torch.Tensor) -> \
             Tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]]:
         # [num_nodes_total, 1 | num_classes]
         h = self.h(x)
