@@ -50,7 +50,6 @@ def train_test_epoch(train: bool, model: GraphSENN, optimizer, loader: DataLoade
 
             sum_loss += batch_size * float(loss)
             sum_class_loss += batch_size * classification_loss
-            # TODO change to more general additional_losses
             sum_reg_loss += batch_size * reg_loss
             for k, v in add_loss_dict.items():
                 sum_add_loss[k] = sum_add_loss.get(k, 0) + v
@@ -77,7 +76,7 @@ def train_test_epoch(train: bool, model: GraphSENN, optimizer, loader: DataLoade
     log(res_dict, step=epoch)
     return res_dict
 
-def main(args, **kwargs) -> tuple[GraphSENN, Any, DataLoader, DataLoader]:
+def main(args, **kwargs) -> tuple[GraphSENN, Any, DataLoader, DataLoader, DataLoader]:
     """
     :param args: The configuration as defined by the commandline arguments
     :param kwargs: additional kwargs to overwrite a loaded config with
@@ -86,6 +85,7 @@ def main(args, **kwargs) -> tuple[GraphSENN, Any, DataLoader, DataLoader]:
     if not isinstance(args, dict):
         args = args.__dict__
 
+    restore_path = None
     if args["resume"] is not None:
         api = wandb.Api()
         run = api.run("jonas-juerss/graph-senn/" + args["resume"])
@@ -135,7 +135,7 @@ def main(args, **kwargs) -> tuple[GraphSENN, Any, DataLoader, DataLoader]:
 
 
     model = GraphSENN(args.gnn_sizes, num_node_features, num_classes, conv_type, gnn_activation, pool)
-    if args.resume is not None:
+    if restore_path is not None:
         model.load_state_dict(torch.load(restore_path))
     model = model.to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.wd)
@@ -151,12 +151,13 @@ def main(args, **kwargs) -> tuple[GraphSENN, Any, DataLoader, DataLoader]:
         if args.save_freq > 0 and epoch % args.save_freq == 0:
             torch.save(model.state_dict(), args.save_path)
         elif args.save_freq == -2 and val_acc > best_val_acc:
+            print(f"Validation accuracy {100*val_acc:.2f}%. Saving.")
             best_val_acc = val_acc
             torch.save(model.state_dict(), args.save_path)
 
     if args.graph_log_freq >= 0:
         pass
-    return model, args, train_loader, test_loader
+    return model, args, train_loader, val_loader, test_loader
 
 
 if __name__ == "__main__":
@@ -177,8 +178,8 @@ if __name__ == "__main__":
     parser.add_argument('--gnn_sizes', type=int, nargs='*',
                         default=[32, 32, 32, 32, 32], dest='gnn_sizes',
                         help='The layer sizes to use for the GNN.')
-    parser.add_argument('--conv_type', type=str, default="GATConv", choices=[c.__name__ for c in CONV_TYPES],
-                        help='The type of graph convolution to use.')
+    parser.add_argument('--conv_type', type=str, default="GCNConv", choices=[c.__name__ for c in CONV_TYPES],
+                        help='The type of graph convolution to use. Note: GATConv does not appear to work with h loss.')
     parser.add_argument('--gnn_activation', type=str, default="LeakyReLU",
                         help='Activation function to be used in between the GNN layers')
     parser.add_argument('--aggregation', type=str, default="Sum", choices=["Sum", "Mean", "Max", "Min", "Mul", "Var",
@@ -212,7 +213,7 @@ if __name__ == "__main__":
 
 
     # Dataset
-    parser.add_argument('--dataset', type=str, default="MUTAG", choices=[re.sub(r'(?<!^)(?=[A-Z])', '-', d.__name__[:-7]).\
+    parser.add_argument('--dataset', type=str, default="UNIQUE-MOTIF", choices=[re.sub(r'(?<!^)(?=[A-Z])', '-', d.__name__[:-7]).\
                         upper() for d in datasets.__all__],
                         help='The name of the dataset to use as defined in datasets.py')
     parser.add_argument('--train_split', type=float, default=0.7,
@@ -231,7 +232,7 @@ if __name__ == "__main__":
 
 
     # Logging
-    parser.add_argument('--save_freq', type=int, default=10,
+    parser.add_argument('--save_freq', type=int, default=-2,
                         help='Every how many epochs to save the model. Set to -1 to disable saving to a file and to -2 '
                              'to save whenever validation accuracy improved. The  last checkpoint will always be '
                              'overwritten with the current one.')
