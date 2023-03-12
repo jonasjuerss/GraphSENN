@@ -11,11 +11,13 @@ from torch import nn
 from torch.autograd import grad
 from torch.autograd.functional import jacobian
 from torch_geometric.nn import Aggregation
+from torch_geometric.utils import to_dense_adj
 
 import custom_logger
 
 if TYPE_CHECKING:
     from graph_senn import GraphSENN
+    from decoders import GraphDecoder
 
 
 def mlp_from_sizes(sizes: List[int], activation=nn.ReLU) -> nn.Sequential:
@@ -46,7 +48,8 @@ class PoolingLayer(torch.nn.Module, abc.ABC):
 
     @abc.abstractmethod
     def calculate_additional_losses(self, model: GraphSENN, x: torch.Tensor, batch: torch.Tensor,
-                                    edge_index: torch.Tensor, theta: torch.Tensor, batch_size: int) ->\
+                                    edge_index: torch.Tensor, theta: torch.Tensor, h: torch.Tensor,
+                                    batch_size: int) ->\
             Tuple[Union[torch.Tensor, int], dict]:
         pass
 
@@ -73,7 +76,8 @@ class StandardPoolingLayer(PoolingLayer):
 
 class GraphSENNPool(PoolingLayer):
     def __init__(self, input_dim: int, num_classes: int, theta_sizes: List[int], h_sizes: List[int], aggr: str,
-                 per_class_theta: bool, per_class_h: bool, global_theta: bool, theta_loss_weight: float):
+                 per_class_theta: bool, per_class_h: bool, global_theta: bool, theta_loss_weight: float,
+                 feat_reconst_loss_weight: float, adj_reconst_loss_weight: float, decoder: Optional[GraphDecoder]):
         super().__init__()
         if not per_class_h and not per_class_theta:
             raise ValueError("At least one of theta and h has to be per class. Otherwise, the same predictions would "
@@ -95,9 +99,48 @@ class GraphSENNPool(PoolingLayer):
             raise ValueError(f"h network has output size {h_sizes[-1]} but expected {expected_h_out}!")
         self.h = mlp_from_sizes([input_dim] + h_sizes)
         self.per_class_h = per_class_h
+        self.feat_loss_weight = feat_reconst_loss_weight
+        self.adj_loss_weight = adj_reconst_loss_weight
+        self.decoder = decoder
+        self.decode_features_loss = torch.nn.MSELoss()
+        self.decode_adj_loss = torch.nn.BCEWithLogitsLoss()  # BCELoss()
 
         self.g: Aggregation = getattr(torch_geometric.nn, f"{aggr}Aggregation")()
         self.num_classes = num_classes
+
+    def calculate_reconstruction_loss(self, x: torch.Tensor, batch: torch.Tensor, edge_index: torch.Tensor,
+                                      h: torch.Tensor) ->\
+            Tuple[torch.Tensor, torch.Tensor, float, float]:
+        """
+
+        :param x: [num_nodes_total, num_features_in]
+        :param batch: [num_nodes_total]
+        :param edge_index: [2, num_edges_total]
+        :param h: [num_nodes_total, 1]
+        :return:
+        """
+        # x_pred: [batch_size, max_num_nodes, num_features_in]
+        # adj_pred [batch_size, max_num_nodes, max_num_nodes]
+        # mask: [batch_size, max_num_nodes]
+        x_pred, adj_pred, mask = self.decoder(h, edge_index, batch)
+        feature_loss = self.decode_features_loss(x_pred[mask], x)
+
+        # [batch_size, max_num_nodes, max_num_nodes]: boolean mask
+        edge_mask = torch.logical_and(mask[:, None, :], mask[:, :, None])
+        adj = to_dense_adj(edge_index, batch)
+        masked_adj = adj[edge_mask]
+        masked_adj_pred = adj_pred[edge_mask]
+        adj_loss = self.decode_adj_loss(masked_adj, masked_adj_pred)
+        # masked_adj should only have values of 0 or 1, we use > 0.5 only to convert it to boolean and avoid numerical
+        # instability
+        booleanized_adj = masked_adj > 0.5
+        # Note that we use log_softmax, not softmax as activation (necessary for numerical stability).
+        # For accuracy we therefore want values > log(0.5)=-0.30102999566
+        edge_acc = torch.sum(booleanized_adj == (masked_adj_pred > -0.30102999566)) / masked_adj.numel()
+        # The sparsity gives us the edge accuracy if we just guess there are none
+        sparsity = 1 - (torch.sum(booleanized_adj) / masked_adj.numel())
+        return feature_loss, adj_loss, edge_acc.item(), sparsity.item()
+
 
     def calculate_stability_loss(self, model: GraphSENN, x: torch.Tensor, batch: torch.Tensor, edge_index: torch.Tensor,
                                  theta: torch.Tensor, batch_size: int):
@@ -141,10 +184,18 @@ class GraphSENNPool(PoolingLayer):
         return accum_loss
 
     def calculate_additional_losses(self, model: GraphSENN, x: torch.Tensor, batch: torch.Tensor,
-                                    edge_index: torch.Tensor, theta: torch.Tensor, batch_size: int) -> \
+                                    edge_index: torch.Tensor, theta: torch.Tensor, h: torch.Tensor,
+                                    batch_size: int) -> \
             Tuple[Union[torch.Tensor, int], dict]:
         res_dict = {}
         loss = 0
+        if self.feat_loss_weight != 0 or self.adj_loss_weight != 0:
+            feat_loss, adj_loss, edge_acc, sparsity = self.calculate_reconstruction_loss(x, batch, edge_index, h)
+            loss += self.feat_loss_weight * feat_loss + self.adj_loss_weight * adj_loss
+            res_dict["feat_loss"] = feat_loss.item()
+            res_dict["adj_loss"] = adj_loss.item()
+            res_dict["edge_acc"] = edge_acc
+            res_dict["sparsity"] = sparsity
         if self.theta_loss_weight != 0:
             stability_loss = self.calculate_stability_loss(model, x, batch, edge_index, theta, batch_size)
             loss += self.theta_loss_weight * stability_loss

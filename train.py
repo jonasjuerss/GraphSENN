@@ -16,6 +16,7 @@ from tqdm import tqdm
 import custom_logger
 import datasets
 from custom_logger import log
+from decoders import AdjGenerationType, FullyConnectedMessagePassingDecoder
 from graph_senn import GraphSENN
 from pooling_layers import StandardPoolingLayer, GraphSENNPool
 
@@ -44,7 +45,8 @@ def train_test_epoch(train: bool, model: GraphSENN, optimizer, loader: DataLoade
             target = data.y
             classification_loss = F.nll_loss(out, target)
             reg_loss, add_loss_dict = model.pooling_layer.calculate_additional_losses(model, data.x, data.batch,
-                                                                                      data.edge_index, theta, batch_size)
+                                                                                      data.edge_index, theta, h,
+                                                                                      batch_size)
 
             loss = classification_loss + reg_loss
 
@@ -52,7 +54,7 @@ def train_test_epoch(train: bool, model: GraphSENN, optimizer, loader: DataLoade
             sum_class_loss += batch_size * classification_loss
             sum_reg_loss += batch_size * reg_loss
             for k, v in add_loss_dict.items():
-                sum_add_loss[k] = sum_add_loss.get(k, 0) + v
+                sum_add_loss[k] = sum_add_loss.get(k, 0) + batch_size * v
 
             pred_classes = out.argmax(dim=1)
             correct += int((pred_classes == target).sum())
@@ -128,8 +130,14 @@ def main(args, **kwargs) -> tuple[GraphSENN, Any, DataLoader, DataLoader, DataLo
 
     gnn_output_size = args.gnn_sizes[-1] if args.gnn_sizes else num_node_features
     if args.senn_pooling:
+        if args.feat_reconst_loss_weight != 0 or args.adj_reconst_loss_weight != 0:
+            decoder = FullyConnectedMessagePassingDecoder(args.gnn_sizes, num_node_features, "SAGEConv", gnn_activation,
+                                                          args.h_adj_dec_intermediate, args.h_adj_dec_final)
+        else:
+            decoder = None
         pool = GraphSENNPool(gnn_output_size, num_classes, args.theta_sizes, args.h_sizes, args.aggregation,
-                             args.per_class_theta, args.per_class_h, args.global_theta, args.theta_loss_weight)
+                             args.per_class_theta, args.per_class_h, args.global_theta, args.theta_loss_weight,
+                             args.feat_reconst_loss_weight, args.adj_reconst_loss_weight, decoder)
     else:
         pool = StandardPoolingLayer(gnn_output_size, num_classes, args.out_sizes, args.aggregation)
 
@@ -189,11 +197,26 @@ if __name__ == "__main__":
                         help="Whether to use our SENN pooling. Baseline otherwise.")
 
     # SENN
+    # h
     parser.add_argument('--h_sizes', type=int, nargs='*',
                         default=[128, 1], dest='h_sizes',
                         help='The layer sizes to use for the h network. Can be empty for identity (of last embedding).')
     parser.add_argument('--per_class_h', default=False, action=argparse.BooleanOptionalAction,
                         help="Whether to use a different concept scalar h per class or the same one for all.")
+    parser.add_argument('--feat_reconst_loss_weight', type=float, default=0,
+                        help='The weight of the feature reconstruction in the reconstruction loss.')
+    parser.add_argument('--adj_reconst_loss_weight', type=float, default=0,
+                        help='The weight of the adjacency reconstruction in the reconstruction loss.')
+    parser.add_argument('--h_adj_dec_intermediate', type=str, default=AdjGenerationType.IDENTITY.value,
+                        choices=[v.value for v in AdjGenerationType.__members__.values()],
+                        help='The type of adjacency reconstruction in intermediate layers when using the '
+                             'FullyConnectedMessagePassingDecoder for the h loss.')
+    parser.add_argument('--h_adj_dec_final', type=str, default=AdjGenerationType.MLP.value,
+                        choices=[v.value for v in AdjGenerationType.__members__.values()],
+                        help='The type of adjacency reconstruction for the final output when using the '
+                             'FullyConnectedMessagePassingDecoder for the h loss.')
+
+    # Theta
     parser.add_argument('--theta_sizes', type=int, nargs='*',
                         default=[128, 4], dest='theta_sizes',
                         help='The layer sizes to use for theta network. Can be empty for identity (of last embedding).')
