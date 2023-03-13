@@ -85,15 +85,12 @@ class GAEAdjNet(torch.nn.Module):
         :param mask: [batch_size, max_num_nodes]
         :return: new adjacency matrix: [batch_size, max_num_nodes, max_num_nodes]
         """
-
         # TODO use mask to avoid unnecessary layer calls
-        # [batch_size, num_nodes_max, num_nodes_max, num_features_in]
-        conc_shape = x.shape[:2] + x.shape[1:2] + x.shape[2:]
-        # [batch_size, num_nodes_max, num_nodes_max, num_features_in] (manually broadcasting using expand)
-        edge_pairwise = torch.cat((x[:, None, :, :].expand(conc_shape), x[:, :, None, :].expand(conc_shape)), dim=-1)
-        # [batch_size, num_nodes_max, num_nodes_max, 1]
-        adj_new = self.mlp(edge_pairwise)
-        return adj_new.squeeze(-1)
+        # [batch_size, max_num_nodes, hidden_sizes[-1]]
+        x = self.mlp(x)
+        # [batch_size, max_num_nodes, max_num_nodes]
+        adj = torch.bmm(x, x.transpose(1, 2))
+        return adj
 
 class FullyConnectedMessagePassingDecoder(GraphDecoder):
     def __init__(self, gnn_sizes: List[int], input_data_dim: int, layer_type_name: str, gnn_activation,
@@ -113,9 +110,9 @@ class FullyConnectedMessagePassingDecoder(GraphDecoder):
             elif adj_type == AdjGenerationType.MLP:
                 return EdgeConcatAdjNet(input_size, [64], self.activation)
             elif adj_type == AdjGenerationType.GAE:
-                raise NotImplementedError()
+                return GAEAdjNet(input_size, [], self.activation)
             elif adj_type == AdjGenerationType.MLP_GAE:
-                raise NotImplementedError()
+                return GAEAdjNet(input_size, [64, 64], self.activation)
             else:
                 raise NotImplementedError(f"There is currently no implementation for generating the adjacency matrix in"
                                           f" the {self.__class__.__name__} as {adj_type}!")
