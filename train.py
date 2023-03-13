@@ -49,6 +49,8 @@ def train_test_epoch(train: bool, model: GraphSENN, optimizer, loader: DataLoade
                                                                                       batch_size)
 
             loss = classification_loss + reg_loss
+            if torch.isnan(loss).item():
+                raise ValueError("NaN encountered during training!")
 
             sum_loss += batch_size * float(loss)
             sum_class_loss += batch_size * classification_loss
@@ -150,21 +152,22 @@ def main(args, **kwargs) -> tuple[GraphSENN, Any, DataLoader, DataLoader, DataLo
 
     os.makedirs(os.path.dirname(args.save_path), exist_ok=True)
     best_val_acc = 0
-    for epoch in tqdm(range(args.num_epochs)):
-        train_test_epoch(True, model, optimizer, train_loader, epoch, "train")
-        train_test_epoch(False, model, optimizer, val_loader, epoch, "test")
-        val_acc = train_test_epoch(False, model, optimizer, test_loader, epoch, "val")["val_accuracy"]
-        if epoch % args.graph_log_freq == 0:
-            pass
-        if args.save_freq > 0 and epoch % args.save_freq == 0:
-            torch.save(model.state_dict(), args.save_path)
-        elif args.save_freq == -2 and val_acc > best_val_acc:
-            print(f"Validation accuracy {100*val_acc:.2f}%. Saving.")
-            best_val_acc = val_acc
-            torch.save(model.state_dict(), args.save_path)
-
-    if args.graph_log_freq >= 0:
-        pass
+    try:
+        for epoch in tqdm(range(args.num_epochs)):
+            train_test_epoch(True, model, optimizer, train_loader, epoch, "train")
+            train_test_epoch(False, model, optimizer, val_loader, epoch, "test")
+            val_acc = train_test_epoch(False, model, optimizer, test_loader, epoch, "val")["val_accuracy"]
+            if epoch % args.graph_log_freq == 0:
+                pass
+            if args.save_freq > 0 and epoch % args.save_freq == 0:
+                torch.save(model.state_dict(), args.save_path)
+            elif args.save_freq == -2 and val_acc > best_val_acc:
+                print(f"Validation accuracy {100*val_acc:.2f}%. Saving.")
+                best_val_acc = val_acc
+                torch.save(model.state_dict(), args.save_path)
+        log({"best_val_acc": best_val_acc}, step=epoch)
+    except:
+        log({"best_val_acc": -1}, step=epoch)
     return model, args, train_loader, val_loader, test_loader
 
 
@@ -185,14 +188,9 @@ if __name__ == "__main__":
         return [int(item) for item in arg.split(',')]
 
     # Architecture
-    # parser.add_argument('--gnn_sizes', type=int, nargs='*',
-    #                     default=[32, 32, 32, 32, 32], dest='gnn_sizes',
-    #                     help='The layer sizes to use for the GNN.')
-
-    parser.add_argument('--gnn_sizes', type=str_to_int_list,
+    parser.add_argument('--gnn_sizes', type=int, nargs='*',
                         default=[32, 32, 32, 32, 32], dest='gnn_sizes',
-                        help='The layer sizes to use for the GNN. Note that syntax differs for compatibility with wandb'
-                             ' sweeps. Example usage: --gnn_sizes 32,32')
+                        help='The layer sizes to use for the GNN.')
     parser.add_argument('--conv_type', type=str, default="GCNConv", choices=[c.__name__ for c in CONV_TYPES],
                         help='The type of graph convolution to use. Note: GATConv does not appear to work with h loss.')
     parser.add_argument('--gnn_activation', type=str, default="LeakyReLU",
