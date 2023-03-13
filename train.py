@@ -181,11 +181,18 @@ if __name__ == "__main__":
     parser.add_argument('--batch_size', type=int, default=64,
                         help='The batch size to use.')
 
+    def str_to_int_list(arg: str):
+        return [int(item) for item in arg.split(',')]
 
     # Architecture
-    parser.add_argument('--gnn_sizes', type=int, nargs='*',
+    # parser.add_argument('--gnn_sizes', type=int, nargs='*',
+    #                     default=[32, 32, 32, 32, 32], dest='gnn_sizes',
+    #                     help='The layer sizes to use for the GNN.')
+
+    parser.add_argument('--gnn_sizes', type=str_to_int_list,
                         default=[32, 32, 32, 32, 32], dest='gnn_sizes',
-                        help='The layer sizes to use for the GNN.')
+                        help='The layer sizes to use for the GNN. Note that syntax differs for compatibility with wandb'
+                             ' sweeps. Example usage: --gnn_sizes 32,32')
     parser.add_argument('--conv_type', type=str, default="GCNConv", choices=[c.__name__ for c in CONV_TYPES],
                         help='The type of graph convolution to use. Note: GATConv does not appear to work with h loss.')
     parser.add_argument('--gnn_activation', type=str, default="LeakyReLU",
@@ -226,7 +233,7 @@ if __name__ == "__main__":
     parser.add_argument('--global_theta', default=False, action=argparse.BooleanOptionalAction,
                         help="Whether to generate theta globally, i.e. concatenate a globally pooled embedding to the "
                              "node embedding when generating theta.")  # This reassembles an attention mechanism
-    parser.add_argument('--theta_loss_weight', type=float, default=0.5,
+    parser.add_argument('--theta_loss_weight', type=float, default=0,
                         help='The weight lambda of the theta regularization loss.')
 
     # No SENN
