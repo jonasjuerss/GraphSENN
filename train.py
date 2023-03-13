@@ -3,7 +3,7 @@ import os.path
 from contextlib import nullcontext
 from datetime import datetime
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, Tuple
 import re
 
 import torch
@@ -80,7 +80,7 @@ def train_test_epoch(train: bool, model: GraphSENN, optimizer, loader: DataLoade
     log(res_dict, step=epoch)
     return res_dict
 
-def main(args, **kwargs) -> tuple[GraphSENN, Any, DataLoader, DataLoader, DataLoader]:
+def main(args, **kwargs) -> Tuple[GraphSENN, Any, DataLoader, DataLoader, DataLoader]:
     """
     :param args: The configuration as defined by the commandline arguments
     :param kwargs: additional kwargs to overwrite a loaded config with
