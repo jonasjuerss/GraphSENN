@@ -198,16 +198,20 @@ if __name__ == "__main__":
     parser.add_argument('--aggregation', type=str, default="Sum", choices=["Sum", "Mean", "Max", "Min", "Mul", "Var",
                                                                            "Std", "Softmax", "PowerMean"],
                         help='The aggregation function to use over all nodes in the output layer.')
-    parser.add_argument('--senn_pooling', default=True, action=argparse.BooleanOptionalAction,
-                        help="Whether to use our SENN pooling. Baseline otherwise.")
+    parser.add_argument('--senn_pooling', action='store_true', help="Whether to use our SENN pooling. Baseline "
+                                                                    "otherwise.")
+    parser.add_argument('--no-senn_pooling', dest='senn_pooling', action='store_false')
+    parser.set_defaults(senn_pooling=True)
 
     # SENN
     # h
     parser.add_argument('--h_sizes', type=int, nargs='*',
                         default=[128, 1], dest='h_sizes',
                         help='The layer sizes to use for the h network. Can be empty for identity (of last embedding).')
-    parser.add_argument('--per_class_h', default=False, action=argparse.BooleanOptionalAction,
-                        help="Whether to use a different concept scalar h per class or the same one for all.")
+    parser.add_argument('--per_class_h', action='store_true', help="Whether to use a different concept scalar h per "
+                                                                   "class or the same one for all.")
+    parser.add_argument('--no-per_class_h', dest='per_class_h', action='store_false')
+    parser.set_defaults(per_class_h=False)
     parser.add_argument('--feat_reconst_loss_weight', type=float, default=0,
                         help='The weight of the feature reconstruction in the reconstruction loss.')
     parser.add_argument('--adj_reconst_loss_weight', type=float, default=0,
@@ -225,12 +229,16 @@ if __name__ == "__main__":
     parser.add_argument('--theta_sizes', type=int, nargs='*',
                         default=[128, 4], dest='theta_sizes',
                         help='The layer sizes to use for theta network. Can be empty for identity (of last embedding).')
-    parser.add_argument('--per_class_theta', default=True, action=argparse.BooleanOptionalAction,
-                        help="Whether to use a different concept weight theta per class (this is what SENN does) or the"
-                             " same one for all.")
-    parser.add_argument('--global_theta', default=False, action=argparse.BooleanOptionalAction,
-                        help="Whether to generate theta globally, i.e. concatenate a globally pooled embedding to the "
-                             "node embedding when generating theta.")  # This reassembles an attention mechanism
+    parser.add_argument('--per_class_theta', action='store_true', help="Whether to use a different concept weight theta"
+                                                                       " per class (this is what SENN does) or the same"
+                                                                       " one for all.")
+    parser.add_argument('--no-per_class_theta', dest='per_class_theta', action='store_false')
+    parser.set_defaults(per_class_theta=True)
+    parser.add_argument('--global_theta', action='store_true', help="Whether to generate theta globally, i.e. "
+                                                                    "concatenate a globally pooled embedding to the "
+                                                                    "node embedding when generating theta.")
+    parser.add_argument('--no-global_theta', dest='global_theta', action='store_false')
+    parser.set_defaults(global_theta=False) # This reassembles an attention mechanism
     parser.add_argument('--theta_loss_weight', type=float, default=0,
                         help='The weight lambda of the theta regularization loss.')
 
