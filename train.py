@@ -144,7 +144,8 @@ def main(args, **kwargs) -> Tuple[GraphSENN, Any, DataLoader, DataLoader, DataLo
         pool = StandardPoolingLayer(gnn_output_size, num_classes, args.out_sizes, args.aggregation)
 
 
-    model = GraphSENN(args.gnn_sizes, num_node_features, num_classes, conv_type, gnn_activation, pool)
+    model = GraphSENN(args.gnn_sizes, num_node_features, num_classes, conv_type, gnn_activation, pool,
+                      args.concept_activation)
     if restore_path is not None:
         model.load_state_dict(torch.load(restore_path))
     model = model.to(device)
@@ -165,7 +166,8 @@ def main(args, **kwargs) -> Tuple[GraphSENN, Any, DataLoader, DataLoader, DataLo
                 print(f"Validation accuracy {100*val_acc:.2f}%. Saving.")
                 best_val_acc = val_acc
                 torch.save(model.state_dict(), args.save_path)
-        log({"best_val_acc": best_val_acc}, step=epoch)
+        if args.num_epochs > 0:
+            log({"best_val_acc": best_val_acc}, step=epoch)
     except:
         log({"best_val_acc": -1}, step=epoch)
     return model, args, train_loader, val_loader, test_loader
@@ -184,9 +186,6 @@ if __name__ == "__main__":
     parser.add_argument('--batch_size', type=int, default=64,
                         help='The batch size to use.')
 
-    def str_to_int_list(arg: str):
-        return [int(item) for item in arg.split(',')]
-
     # Architecture
     parser.add_argument('--gnn_sizes', type=int, nargs='*',
                         default=[32, 32, 32, 32, 32], dest='gnn_sizes',
@@ -204,6 +203,12 @@ if __name__ == "__main__":
     parser.set_defaults(senn_pooling=True)
 
     # SENN
+
+    parser.add_argument('--concept_activation', type=str, default="none",
+                        choices=["none", "sigmoid", "gumbel_softmax"],
+                        help='The function applied to the last node embeddings before they serve as input to the h/'
+                             'theta networks.')
+
     # h
     parser.add_argument('--h_sizes', type=int, nargs='*',
                         default=[128, 1], dest='h_sizes',

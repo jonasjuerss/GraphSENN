@@ -1,3 +1,4 @@
+from functools import partial
 from typing import List, Type, Tuple
 
 import torch
@@ -7,10 +8,12 @@ from torch_geometric.data import Data
 
 from pooling_layers import PoolingLayer
 
-
+class GumbleSoftmaxLayer(torch.nn.Module):
+    def forward(self, x):
+        return torch.nn.functional.gumbel_softmax(x, hard=True)
 class GraphSENN(torch.nn.Module):
     def __init__(self, gnn_sizes: List[int], input_dim: int, output_dim: int, layer_type: Type[torch.nn.Module],
-                 gnn_activation, pooling_layer: PoolingLayer, **gnn_layer_kwargs):
+                 gnn_activation, pooling_layer: PoolingLayer, concept_activation: str, **gnn_layer_kwargs):
         super().__init__()
         self.activation = gnn_activation
         self.input_dim = input_dim
@@ -25,6 +28,16 @@ class GraphSENN(torch.nn.Module):
                                'x, edge_index -> x'))
         else:
             gnn_layers = [(torch.nn.Identity(), 'x -> x')]
+
+
+
+        if concept_activation == "sigmoid":
+            gnn_layers.append((torch.nn.Sigmoid(), 'x -> x'))
+        elif concept_activation == "gumbel_softmax":
+            gnn_layers.append((GumbleSoftmaxLayer(), 'x -> x'))
+        elif concept_activation != "none":
+            raise ValueError(f"Unknown concept activation function {concept_activation}")
+
         self.gnn_part = torch_geometric.nn.Sequential('x, edge_index, batch', gnn_layers)
         self.output_dim = output_dim
         self.pooling_layer = pooling_layer
