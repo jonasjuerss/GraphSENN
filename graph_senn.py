@@ -33,6 +33,8 @@ class GraphSENN(torch.nn.Module):
 
         if concept_activation == "sigmoid":
             gnn_layers.append((torch.nn.Sigmoid(), 'x -> x'))
+        if concept_activation == "softmax":
+            gnn_layers.append((torch.nn.Softmax(), 'x -> x'))
         elif concept_activation == "gumbel_softmax":
             gnn_layers.append((GumbleSoftmaxLayer(), 'x -> x'))
         elif concept_activation != "none":
