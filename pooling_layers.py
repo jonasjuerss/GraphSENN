@@ -130,13 +130,13 @@ class GraphSENNPool(PoolingLayer):
         adj = to_dense_adj(edge_index, batch)
         masked_adj = adj[edge_mask]
         masked_adj_pred = adj_pred[edge_mask]
-        adj_loss = self.decode_adj_loss(masked_adj, masked_adj_pred)
+        adj_loss = self.decode_adj_loss(masked_adj_pred, masked_adj)
         # masked_adj should only have values of 0 or 1, we use > 0.5 only to convert it to boolean and avoid numerical
         # instability
         booleanized_adj = masked_adj > 0.5
-        # Note that we use log_softmax, not softmax as activation (necessary for numerical stability).
-        # For accuracy we therefore want values > log(0.5)=-0.30102999566
-        edge_acc = torch.sum(booleanized_adj == (masked_adj_pred > -0.30102999566)) / masked_adj.numel()
+        # Note that we do not use an activation but a loss from logits (necessary for numerical stability).
+        # For accuracy we therefore want values > 0 as sigmoid(x) > 0.5 <=> x > 0
+        edge_acc = torch.sum(booleanized_adj == (masked_adj_pred > 0)) / masked_adj.numel()
         # The sparsity gives us the edge accuracy if we just guess there are none
         sparsity = 1 - (torch.sum(booleanized_adj) / masked_adj.numel())
         return feature_loss, adj_loss, edge_acc.item(), sparsity.item()
@@ -191,14 +191,14 @@ class GraphSENNPool(PoolingLayer):
         loss = 0
         if self.feat_loss_weight != 0 or self.adj_loss_weight != 0:
             feat_loss, adj_loss, edge_acc, sparsity = self.calculate_reconstruction_loss(x, batch, edge_index, h)
-            loss += self.feat_loss_weight * feat_loss + self.adj_loss_weight * adj_loss
+            loss = loss + self.feat_loss_weight * feat_loss + self.adj_loss_weight * adj_loss
             res_dict["feat_loss"] = feat_loss.item()
             res_dict["adj_loss"] = adj_loss.item()
             res_dict["edge_acc"] = edge_acc
             res_dict["sparsity"] = sparsity
         if self.theta_loss_weight != 0:
             stability_loss = self.calculate_stability_loss(model, x, batch, edge_index, theta, batch_size)
-            loss += self.theta_loss_weight * stability_loss
+            loss = loss + self.theta_loss_weight * stability_loss
             res_dict["stability_loss"] = stability_loss.item()
         return loss, res_dict
 

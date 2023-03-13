@@ -90,7 +90,7 @@ def main(args, **kwargs) -> tuple[GraphSENN, Any, DataLoader, DataLoader, DataLo
     restore_path = None
     if args["resume"] is not None:
         api = wandb.Api()
-        run = api.run("jonas-juerss/graph-senn/" + args["resume"])
+        run = api.run(f"{custom_logger.wandb_entity}/{custom_logger.wandb_project}/" + args["resume"])
         save_path = args["save_path"]
         args = run.config
         restore_path = args["save_path"]
@@ -172,7 +172,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
     # Training Details
-    parser.add_argument('--lr', type=float, default=0.01,
+    parser.add_argument('--lr', type=float, default=0.001,
                         help='The Adam learning rate to use.')
     parser.add_argument('--wd', type=float, default=5e-4,
                         help='The Adam weight decay to use.')
