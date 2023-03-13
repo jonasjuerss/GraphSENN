@@ -20,7 +20,7 @@ python train.py --help
 ```
 
 ### Weights & Biases
-We use weights and biases for logging. This can be disabled with `--no_wandb`. However, note that you will not see any 
+We use [Weights & Biases](https://wandb.com) for logging. This can be disabled with `--no_wandb`. However, note that you will not see any 
 training or test metrics in this case. Model checkpoints can still be saved. To use weights and biases, install it via 
 `pip install wandb`, login via `wandb login` and change the `jonas-juerss` in  `custom_logger.py` to your username.
 
