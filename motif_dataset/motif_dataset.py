@@ -95,7 +95,8 @@ class UniqueMotifCategorizationDataset(CustomDataset):
             possible_motifs = [[1 - p, p] for p in motif_probs]
 
         class_names = [""]
-        for m in possible_motifs:
+        # Note that the first concept will have the highest class value in the end
+        for m in reversed(possible_motifs):
             class_names += [prev + ("" if prev == "" else "+") + m.__class__.__name__[:-5] for prev in class_names]
         class_names[0] = "none"
 
@@ -132,7 +133,7 @@ class UniqueMultipleOccurrencesMotifCategorizationDataset(CustomDataset):
         :param motif_probs: The probability of each motif to be present in the graph
         """
         class_names = [""]
-        for m in possible_motifs:
+        for m in reversed(possible_motifs):
             class_names += [prev + ("" if prev == "" else "+") + m.__class__.__name__[:-5] for prev in class_names]
         class_names[0] = "none"
 
