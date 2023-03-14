@@ -7,7 +7,7 @@ import json
 from typing import Union, Tuple, List
 
 import torch
-from torch import Tensor
+from torch import Tensor, LongTensor
 from torch_geometric.data import Data
 from torch_geometric.utils import to_undirected
 
@@ -51,9 +51,24 @@ class SparseGraph:
 
     def add_edges(self, edges: List[List[int]]) -> None:
         """
-        :param edges: Note: this is a list of edges (e.g. [[0, 1], [1, 0]]) would add a bidirectional edge between nodes 0 and 1. It is not a slice of an edge_index tensor
+        :param edges: Note: this is a list of edges (e.g. [[0, 1], [1, 0]]) would add a bidirectional edge between nodes
+        0 and 1. It is not a slice of an edge_index tensor
         """
         self.edge_index = torch.cat((self.edge_index, torch.tensor(edges, dtype=torch.long).T), dim=1)
+
+    def add_edges_if_not_exist_list(self, edges: List[List[int]]) -> None:
+        """
+        :param edges: Note: this is a list of edges (e.g. [[0, 1], [1, 0]]) would add a bidirectional edge between nodes
+        0 and 1. It is not a slice of an edge_index tensor
+        """
+        # [2, num_edges]
+        added_edge_index = torch.tensor(edges, dtype=torch.long).T
+        self.add_edges_if_not_exist_edge_index(added_edge_index)
+
+    def add_edges_if_not_exist_edge_index(self, edge_index: Tensor) -> None:
+        for i in range(edge_index.shape[1]):
+            if not torch.any(torch.all(self.edge_index == edge_index[:, i:i+1], dim=0)):
+                self.edge_index = torch.cat((self.edge_index, edge_index[:, i:i+1]), dim=1)
 
     def num_nodes(self):
         return self.x.shape[0]
@@ -80,6 +95,10 @@ class Motif(cs.ArgSerializable):
     @abstractmethod
     def sample(self) -> SparseGraph:
         pass
+
+    @property
+    def name(self):
+        return self.__class__.__name__[:-5]
 
 
 class HouseMotif(Motif):
@@ -141,6 +160,17 @@ class FullyConnectedMotif(Motif):
         adj[node_indices, node_indices] = 0
         edge_index, _, _ = adj_to_edge_index(adj)
         return SparseGraph(x, edge_index)
+
+    @property
+    def name(self):
+        if self.num_nodes == 3:
+            return "Triangle"
+        elif self.num_nodes == 4:
+            return "FCSquare"
+        elif self.num_nodes == 5:
+            return "FCPentagon"
+        elif self.num_nodes == 6:
+            return "FCHexagon"
 
 
 class BinaryTreeMotif(Motif):

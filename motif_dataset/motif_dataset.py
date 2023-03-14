@@ -80,9 +80,14 @@ class CustomDataset(seri.ArgSerializable):
         pass
 
 
-class UniqueMotifCategorizationDataset(CustomDataset):
+class UniqueMultipleOccurrencesMotifCategorizationDataset(CustomDataset):
+    """
+    Same classes as UniqueMotifCategorizationDataset but motifs may als occur multiple times.
+    For categorization, it is still only relevant if a motif occurred at least once
+    """
 
-    def __init__(self, base_motif: Motif, possible_motifs: List[Motif], motif_probs: List[List[float]]):
+    def __init__(self, base_motif: Motif, possible_motifs: List[Motif], motif_probs: List[List[float]],
+                 perturb: float = 0.00):
         """
         :param base_motif: The motif to attach others to
         :param possible_motifs: The motifs that could be present. there will be 2 ^ len(possible_motifs) classes,
@@ -97,14 +102,15 @@ class UniqueMotifCategorizationDataset(CustomDataset):
         class_names = [""]
         # Note that the first concept will have the highest class value in the end
         for m in reversed(possible_motifs):
-            class_names += [prev + ("" if prev == "" else "+") + m.__class__.__name__[:-5] for prev in class_names]
+            class_names += [prev + ("" if prev == "" else "+") + m.name for prev in class_names]
         class_names[0] = "none"
 
         super().__init__(base_motif.max_nodes + sum([m.max_nodes for m in possible_motifs]),
                          2 ** len(possible_motifs), base_motif.num_colors, class_names,
-                         dict(base_motif=base_motif, possible_motifs=possible_motifs, motif_probs=motif_probs))
+                         dict(base_motif=base_motif, possible_motifs=possible_motifs, motif_probs=motif_probs,
+                              perturb=perturb))
         assert len(motif_probs) == len(possible_motifs)
-        self.template = CustomDatasetGraphTemplate(base_motif, possible_motifs)
+        self.template = CustomDatasetGraphTemplate(base_motif, possible_motifs, perturb)
         self.motif_probs = motif_probs
 
     def _sample(self) -> Data:
@@ -119,13 +125,9 @@ class UniqueMotifCategorizationDataset(CustomDataset):
         graph = self.template.sample(counts)
         return Data(x=graph.x, edge_index=graph.edge_index, y=torch.tensor([y]), num_nodes=graph.num_nodes())
 
-class UniqueMultipleOccurrencesMotifCategorizationDataset(CustomDataset):
-    """
-    Same classes as UniqueMotifCategorizationDataset but motifs may als occur multiple times.
-    For categorization, it is still only relevant if a motif occurred at least once
-    """
+class UniqueMotifCategorizationDataset(CustomDataset):
 
-    def __init__(self, base_motif: Motif, possible_motifs: List[Motif], motif_probs: List[float]):
+    def __init__(self, base_motif: Motif, possible_motifs: List[Motif], motif_probs: List[float], perturb: float = 0.0):
         """
         :param base_motif: The motif to attach others to
         :param possible_motifs: The motifs that could be present. there will be 2 ^ len(possible_motifs) classes,
@@ -134,14 +136,15 @@ class UniqueMultipleOccurrencesMotifCategorizationDataset(CustomDataset):
         """
         class_names = [""]
         for m in reversed(possible_motifs):
-            class_names += [prev + ("" if prev == "" else "+") + m.__class__.__name__[:-5] for prev in class_names]
-        class_names[0] = "none"
+            class_names += [prev + ("" if prev == "" else "+") + m.name for prev in class_names]
+        class_names[0] = "None"
 
         super().__init__(base_motif.max_nodes + sum([m.max_nodes for m in possible_motifs]),
                          2 ** len(possible_motifs), base_motif.num_colors, class_names,
-                         dict(base_motif=base_motif, possible_motifs=possible_motifs, motif_probs=motif_probs))
+                         dict(base_motif=base_motif, possible_motifs=possible_motifs, motif_probs=motif_probs,
+                              perturb=perturb))
         assert len(motif_probs) == len(possible_motifs)
-        self.template = CustomDatasetGraphTemplate(base_motif, possible_motifs)
+        self.template = CustomDatasetGraphTemplate(base_motif, possible_motifs, perturb)
         self.motif_probs = motif_probs
 
     def _sample(self) -> Data:
@@ -159,15 +162,17 @@ class UniqueMultipleOccurrencesMotifCategorizationDataset(CustomDataset):
 
 
 class CustomDatasetGraphTemplate(seri.ArgSerializable):
-    def __init__(self, base_motif: Motif, possible_motifs: List[Motif]):
+    def __init__(self, base_motif: Motif, possible_motifs: List[Motif], perturb: float):
         """
         A generator for graphs that consist of a base motif with certain other feature motifs attached to the nodes of this graph
         :param base_motif: The motif to use as a base graph
         :param possible_motifs: other motifs to attach to it
+        :param perturb: There will be binom(num_nodes, perturb) random edges added (so expected value is num_nodes * perturb)
         """
         super().__init__(dict(base_motif=base_motif, possible_motifs=possible_motifs))
         self.base_motif = base_motif
         self.possible_motifs = possible_motifs
+        self.perturb = torch.tensor(perturb)
 
     def sample(self, motif_counts: List[int]) -> SparseGraph:
         if len(motif_counts) != len(self.possible_motifs):
@@ -182,4 +187,9 @@ class CustomDatasetGraphTemplate(seri.ArgSerializable):
                 num_nodes_prev = graph.num_nodes()
                 graph = graph.merged_with(motif.sample())
                 graph.add_edges([[connect_loc, num_nodes_prev], [num_nodes_prev, connect_loc]])
+        num_added_edges = int(torch.distributions.binomial.Binomial(graph.num_nodes(), self.perturb).sample().item())
+        edge_index = torch.randint(0, graph.num_nodes(), (2, num_added_edges))
+        edge_index = torch.cat((edge_index, edge_index[[1, 0], :]), dim=1)
+        # Edge index may contain duplicates but we deal with this in
+        graph.add_edges_if_not_exist_edge_index(edge_index)
         return graph

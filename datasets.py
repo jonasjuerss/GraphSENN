@@ -5,8 +5,9 @@ import numpy as np
 import torch_geometric
 from torch_geometric.datasets import TUDataset
 
-from motif_dataset.motif_dataset import UniqueMotifCategorizationDataset
-from motif_dataset.motifs import BinaryTreeMotif, HouseMotif, FullyConnectedMotif
+from motif_dataset.motif_dataset import UniqueMotifCategorizationDataset, \
+    UniqueMultipleOccurrencesMotifCategorizationDataset
+from motif_dataset.motifs import BinaryTreeMotif, HouseMotif, FullyConnectedMotif, TriangleMotif
 
 
 class DatasetWrapper(abc.ABC):
@@ -65,10 +66,25 @@ class RedditBinaryWrapper(DatasetWrapper):
 
 class UniqueMotifWrapper(DatasetWrapper):
     def __init__(self, num_samples=2000, num_colors=2):
-        sampler = UniqueMotifCategorizationDataset(BinaryTreeMotif(5, [0], num_colors),
-                                                   [HouseMotif([1], [1], num_colors),
-                                                    FullyConnectedMotif(5, [1], num_colors)],
-                                                   [[0.4, 0.6], [0.4, 0.6]])
+        sampler = UniqueMultipleOccurrencesMotifCategorizationDataset(BinaryTreeMotif(5, [0], num_colors),
+                                                                      [HouseMotif([1], [1], num_colors),
+                                                                       FullyConnectedMotif(5, [1], num_colors)],
+                                                                      [[0.4, 0.6], [0.4, 0.6]])
+        super().__init__([sampler.sample() for _ in range(num_samples)],
+                         sampler.num_classes, sampler.num_node_features, sampler.class_names)
+        self.color_map = np.array(['#2c3e50', '#e74c3c'])
+
+    def get_node_colors(self, x: np.ndarray) -> np.ndarray:
+        return self.color_map[np.argmax(x, axis=-1)]
+
+class UniqueMotifHardWrapper(DatasetWrapper):
+    def __init__(self, num_samples=2000, num_colors=2):
+        sampler = UniqueMultipleOccurrencesMotifCategorizationDataset(BinaryTreeMotif(5, [0], num_colors),
+                                                                      [HouseMotif([1], [1], num_colors),
+                                                                       FullyConnectedMotif(5, [1], num_colors),
+                                                                       FullyConnectedMotif(3, [1], num_colors)],
+                                                                      [[0.4, 0.3, 0.3], [0.4, 0.3, 0.3],
+                                                                       [0.4, 0.3, 0.3]], perturb=0.02)
         super().__init__([sampler.sample() for _ in range(num_samples)],
                          sampler.num_classes, sampler.num_node_features, sampler.class_names)
         self.color_map = np.array(['#2c3e50', '#e74c3c'])
@@ -79,10 +95,10 @@ class UniqueMotifWrapper(DatasetWrapper):
 
 class UniqueMotifEasyWrapper(DatasetWrapper):
     def __init__(self, num_samples=2000, num_colors=3):
-        sampler = UniqueMotifCategorizationDataset(BinaryTreeMotif(5, [0], num_colors),
-                                                   [HouseMotif([1], [1], num_colors),
-                                                    FullyConnectedMotif(5, [2], num_colors)],
-                                                   [[0.4, 0.6], [0.4, 0.6]])
+        sampler = UniqueMultipleOccurrencesMotifCategorizationDataset(BinaryTreeMotif(5, [0], num_colors),
+                                                                      [HouseMotif([1], [1], num_colors),
+                                                                       FullyConnectedMotif(5, [2], num_colors)],
+                                                                      [[0.4, 0.6], [0.4, 0.6]])
         super().__init__([sampler.sample() for _ in range(num_samples)],
                          sampler.num_classes, sampler.num_node_features, sampler.class_names)
         self.color_map = np.array(['#2c3e50', '#e74c3c'])
@@ -91,7 +107,7 @@ class UniqueMotifEasyWrapper(DatasetWrapper):
         return self.color_map[np.argmax(x, axis=-1)]
 
 
-__all__ = [MutagWrapper, EnzymesWrapper, RedditBinaryWrapper, UniqueMotifWrapper]
+__all__ = [MutagWrapper, EnzymesWrapper, RedditBinaryWrapper, UniqueMotifWrapper, UniqueMotifHardWrapper]
 
 
 def from_name(name: str):
