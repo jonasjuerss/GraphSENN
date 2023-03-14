@@ -238,6 +238,11 @@ if __name__ == "__main__":
                         choices=[v.value for v in AdjGenerationType.__members__.values()],
                         help='The type of adjacency reconstruction for the final output when using the '
                              'FullyConnectedMessagePassingDecoder for the h loss.')
+    parser.add_argument('--learn_h', action='store_true', help="Whether to learn h from the GNN output. Otherwise will "
+                                                               "use one-hot vector of ground truth annotations "
+                                                               "(assuming they are present and fit)")
+    parser.add_argument('--no-learn_h', dest='learn_h', action='store_false')
+    parser.set_defaults(per_class_h=True)
 
     # Theta
     parser.add_argument('--theta_sizes', type=int, nargs='*',

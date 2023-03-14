@@ -35,14 +35,16 @@ def mlp_from_sizes(sizes: List[int], activation=nn.ReLU) -> nn.Sequential:
 
 class PoolingLayer(torch.nn.Module, abc.ABC):
     @abc.abstractmethod
-    def forward(self, x: torch.Tensor, batch: torch.Tensor) -> \
+    def forward(self, x: torch.Tensor, batch: torch.Tensor, annotations: Optional[torch.Tensor]) -> \
             Tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]]:
         """
         :param x: [num_nodes_total, embedding_dim]
         :param (batch): [num_nodes_total] (assignment of nodes to their batch element)
+        :param annotations: [num_nodes_total, input_dim]
         :return:
             x: [batch_size, num_classes]
-            reg_loss: additional regularization loss
+            theta (only for SENN Pooling)
+            h (only for SENN Pooling)
         """
         pass
 
@@ -69,7 +71,7 @@ class StandardPoolingLayer(PoolingLayer):
                                     batch_size: int) -> \
             Tuple[Union[torch.Tensor, int], dict]:
         return 0, {}
-    def forward(self, x: torch.Tensor, batch: torch.Tensor) -> \
+    def forward(self, x: torch.Tensor, batch: torch.Tensor, annotations: Optional[torch.Tensor]) -> \
             Tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]]:
         # [batch_size, num_classes]
         return self.out(self.aggr(x=x, index=batch)), None, None
@@ -78,7 +80,8 @@ class StandardPoolingLayer(PoolingLayer):
 class GraphSENNPool(PoolingLayer):
     def __init__(self, input_dim: int, num_classes: int, theta_sizes: List[int], h_sizes: List[int], aggr: str,
                  per_class_theta: bool, per_class_h: bool, global_theta: bool, theta_loss_weight: float,
-                 feat_reconst_loss_weight: float, adj_reconst_loss_weight: float, decoder: Optional[GraphDecoder]):
+                 feat_reconst_loss_weight: float, adj_reconst_loss_weight: float, decoder: Optional[GraphDecoder],
+                 learn_h: bool):
         super().__init__()
         if not per_class_h and not per_class_theta:
             raise ValueError("At least one of theta and h has to be per class. Otherwise, the same predictions would "
@@ -98,7 +101,13 @@ class GraphSENNPool(PoolingLayer):
         expected_h_out = num_classes if per_class_h else 1
         if h_sizes[-1] != expected_h_out:
             raise ValueError(f"h network has output size {h_sizes[-1]} but expected {expected_h_out}!")
-        self.h = mlp_from_sizes([input_dim] + h_sizes)
+        self.h = None
+        if learn_h:
+            self.h = mlp_from_sizes([input_dim] + h_sizes)
+        elif theta_loss_weight != 0:
+            raise ValueError("Cannot calculate theta loss when using ground-truth h as the derivative of h is unknown.")
+        else:
+            raise NotImplementedError("Ground truths for motifs not implemented yet!")
         self.per_class_h = per_class_h
         self.feat_loss_weight = feat_reconst_loss_weight
         self.adj_loss_weight = adj_reconst_loss_weight
@@ -108,6 +117,7 @@ class GraphSENNPool(PoolingLayer):
 
         self.g: Aggregation = getattr(torch_geometric.nn, f"{aggr}Aggregation")()
         self.num_classes = num_classes
+        self.input_dim = input_dim
 
     def calculate_reconstruction_loss(self, x: torch.Tensor, batch: torch.Tensor, edge_index: torch.Tensor,
                                       h: torch.Tensor) ->\
@@ -202,7 +212,7 @@ class GraphSENNPool(PoolingLayer):
             res_dict["stability_loss"] = stability_loss.item()
         return loss, res_dict
 
-    def forward(self, x: torch.Tensor, batch: torch.Tensor) -> \
+    def forward(self, x: torch.Tensor, batch: torch.Tensor, annotations: torch.Tensor) -> \
             Tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]]:
         # [num_nodes_total, 1 | num_classes]
         h = self.h(x)
