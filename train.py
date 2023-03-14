@@ -44,7 +44,7 @@ def train_test_epoch(train: bool, model: GraphSENN, optimizer, loader: DataLoade
             out, x_out, theta, h = model(data.x, data.edge_index, data.batch)
             target = data.y
             classification_loss = F.nll_loss(out, target)
-            reg_loss, add_loss_dict = model.pooling_layer.calculate_additional_losses(model, data.x, data.batch,
+            reg_loss, add_loss_dict = model.pooling_layer.calculate_additional_losses(model, data.x, x_out, data.batch,
                                                                                       data.edge_index, theta, h,
                                                                                       batch_size)
 

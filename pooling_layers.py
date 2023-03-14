@@ -47,7 +47,7 @@ class PoolingLayer(torch.nn.Module, abc.ABC):
         pass
 
     @abc.abstractmethod
-    def calculate_additional_losses(self, model: GraphSENN, x: torch.Tensor, batch: torch.Tensor,
+    def calculate_additional_losses(self, model: GraphSENN, x: torch.Tensor, x_out: torch.Tensor, batch: torch.Tensor,
                                     edge_index: torch.Tensor, theta: torch.Tensor, h: torch.Tensor,
                                     batch_size: int) ->\
             Tuple[Union[torch.Tensor, int], dict]:
@@ -64,8 +64,9 @@ class StandardPoolingLayer(PoolingLayer):
                              f"classes {num_classes}!")
         self.out = mlp_from_sizes(output_sizes)
 
-    def calculate_additional_losses(self, model: GraphSENN, x: torch.Tensor, batch: torch.Tensor,
-                                    edge_index: torch.Tensor, theta: torch.Tensor, batch_size: int) -> \
+    def calculate_additional_losses(self, model: GraphSENN, x: torch.Tensor, x_out: torch.Tensor, batch: torch.Tensor,
+                                    edge_index: torch.Tensor, theta: torch.Tensor, h: torch.Tensor,
+                                    batch_size: int) -> \
             Tuple[Union[torch.Tensor, int], dict]:
         return 0, {}
     def forward(self, x: torch.Tensor, batch: torch.Tensor) -> \
@@ -142,7 +143,7 @@ class GraphSENNPool(PoolingLayer):
         return feature_loss, adj_loss, edge_acc.item(), sparsity.item()
 
 
-    def calculate_stability_loss(self, model: GraphSENN, x: torch.Tensor, batch: torch.Tensor, edge_index: torch.Tensor,
+    def calculate_stability_loss(self, model: GraphSENN, x_out: torch.Tensor, batch: torch.Tensor, edge_index: torch.Tensor,
                                  theta: torch.Tensor, batch_size: int):
         accum_loss = 0
         start_index = 0
@@ -151,18 +152,17 @@ class GraphSENNPool(PoolingLayer):
             mask = batch == sample
             # [num_nodes] containing the indices of all current nodes
             node_nums = torch.nonzero(mask).squeeze(1)
-            x_sample = x[mask]
-            num_nodes = x_sample.shape[0]
-            input_dim = x_sample.shape[1]
+            x_out_sample = x_out[mask]
+            num_nodes = x_out_sample.shape[0]
+            input_dim = x_out_sample.shape[1]
             edge_index_sample = edge_index[:, torch.logical_and(edge_index[0] >= node_nums[0],
                                                                 edge_index[0] <= node_nums[-1])] - start_index
             # [num_nodes, num_classes | 1]
             theta_sample = theta[mask]
             batch_sample = torch.zeros(num_nodes, dtype=torch.long, device=custom_logger.device)
-            h = lambda emb: self.h(model.gnn_part(emb, edge_index=edge_index_sample, batch=batch_sample))
-            f = lambda emb: model(emb, edge_index_sample, batch_sample)[0]
+            f = lambda emb: self(emb, batch_sample)[0]
             # [num_nodes, num_classes | 1, num_nodes * input_dim]
-            J_x_h = jacobian(h, x_sample, create_graph=True, vectorize=True) \
+            J_x_h = jacobian(self.h, x_out_sample, create_graph=True, vectorize=True) \
                 .reshape(num_nodes, -1, num_nodes * input_dim)
 
             # [num_classes | 1, 1, num_nodes] @ [num_classes | 1, num_nodes, num_nodes * input_dim]
@@ -175,7 +175,7 @@ class GraphSENNPool(PoolingLayer):
             desired_derivative = torch.matmul(theta_sample.T[:, None, :], J_x_h.transpose(0, 1))
 
             # [num_classes, num_nodes * input_dim]
-            nabla_x_f_x = jacobian(f, x_sample, create_graph=True, vectorize=True).reshape(-1, num_nodes * input_dim)
+            nabla_x_f_x = jacobian(f, x_out_sample, create_graph=True, vectorize=True).reshape(-1, num_nodes * input_dim)
             # Note that we take the divide the norm by the number of elements such that each sample has the same impact
             # which would otherwise not be given in our setting where the number of nodes/concepts can vary. It also
             # makes the choice of lambda more robust to the dataset.
@@ -183,7 +183,7 @@ class GraphSENNPool(PoolingLayer):
             start_index += num_nodes
         return accum_loss
 
-    def calculate_additional_losses(self, model: GraphSENN, x: torch.Tensor, batch: torch.Tensor,
+    def calculate_additional_losses(self, model: GraphSENN, x: torch.Tensor, x_out: torch.Tensor, batch: torch.Tensor,
                                     edge_index: torch.Tensor, theta: torch.Tensor, h: torch.Tensor,
                                     batch_size: int) -> \
             Tuple[Union[torch.Tensor, int], dict]:
@@ -197,7 +197,7 @@ class GraphSENNPool(PoolingLayer):
             res_dict["edge_acc"] = edge_acc
             res_dict["sparsity"] = sparsity
         if self.theta_loss_weight != 0:
-            stability_loss = self.calculate_stability_loss(model, x, batch, edge_index, theta, batch_size)
+            stability_loss = self.calculate_stability_loss(model, x_out, batch, edge_index, theta, batch_size)
             loss = loss + self.theta_loss_weight * stability_loss
             res_dict["stability_loss"] = stability_loss.item()
         return loss, res_dict
