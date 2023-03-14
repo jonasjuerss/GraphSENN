@@ -123,7 +123,8 @@ class UniqueMultipleOccurrencesMotifCategorizationDataset(CustomDataset):
                 y += 1
             counts.append(num_motif)
         graph = self.template.sample(counts)
-        return Data(x=graph.x, edge_index=graph.edge_index, y=torch.tensor([y]), num_nodes=graph.num_nodes())
+        return Data(x=graph.x, edge_index=graph.edge_index, y=torch.tensor([y]), num_nodes=graph.num_nodes(),
+                    annotations=graph.annotations)
 
 class UniqueMotifCategorizationDataset(CustomDataset):
 
@@ -158,7 +159,8 @@ class UniqueMotifCategorizationDataset(CustomDataset):
             else:
                 counts.append(0)
         graph = self.template.sample(counts)
-        return Data(x=graph.x, edge_index=graph.edge_index, y=torch.tensor([y]), num_nodes=graph.num_nodes())
+        return Data(x=graph.x, edge_index=graph.edge_index, y=torch.tensor([y]), num_nodes=graph.num_nodes(),
+                    annotations=graph.annotations)
 
 
 class CustomDatasetGraphTemplate(seri.ArgSerializable):
