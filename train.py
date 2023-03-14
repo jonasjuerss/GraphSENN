@@ -88,17 +88,24 @@ def main(args, **kwargs) -> Tuple[GraphSENN, Any, DataLoader, DataLoader, DataLo
     """
     if not isinstance(args, dict):
         args = args.__dict__
-
     restore_path = None
     if args["resume"] is not None:
         api = wandb.Api()
-        run = api.run(f"{custom_logger.wandb_entity}/{custom_logger.wandb_project}/" + args["resume"])
+        run_path = f"{custom_logger.wandb_entity}/{custom_logger.wandb_project}/" + args["resume"]
+        run = api.run(run_path)
         save_path = args["save_path"]
         args = run.config
         restore_path = args["save_path"]
+        if args["save_wandb"] and not os.path.isfile(restore_path):
+            print("Downloading checkpoint from wandb...")
+            wandb.restore(restore_path, run_path=run_path)
         args["save_path"] = save_path
         for k, v in kwargs.items():
             args[k] = v
+    else:
+        if not args["use_wandb"] and args["save_wandb"]:
+            print("Disabling saving to wandb as logging to wandb is also disabled.")
+            args["save_wandb"] = False
 
     if isinstance(args, dict):
         args = SimpleNamespace(**args)
@@ -160,12 +167,14 @@ def main(args, **kwargs) -> Tuple[GraphSENN, Any, DataLoader, DataLoader, DataLo
             val_acc = train_test_epoch(False, model, optimizer, test_loader, epoch, "val")["val_accuracy"]
             if epoch % args.graph_log_freq == 0:
                 pass
-            if args.save_freq > 0 and epoch % args.save_freq == 0:
+            if (args.save_freq > 0 and epoch % args.save_freq == 0) or\
+                    (args.save_freq == -2 and val_acc > best_val_acc):
                 torch.save(model.state_dict(), args.save_path)
-            elif args.save_freq == -2 and val_acc > best_val_acc:
-                print(f"Validation accuracy {100*val_acc:.2f}%. Saving.")
-                best_val_acc = val_acc
-                torch.save(model.state_dict(), args.save_path)
+                if args.save_wandb:
+                    wandb.save(args.save_path, policy="now")
+                if args.save_freq == -2:
+                    print(f"Validation accuracy {100 * val_acc:.2f}%. Saving.")
+            best_val_acc = max(val_acc, best_val_acc)
         if args.num_epochs > 0:
             log({"best_val_acc": best_val_acc}, step=epoch)
     except:
@@ -278,8 +287,11 @@ if __name__ == "__main__":
                              'to save whenever validation accuracy improved. The  last checkpoint will always be '
                              'overwritten with the current one.')
     parser.add_argument('--save_path', type=str,
-                        default=os.path.join("models", datetime.now().strftime("%d-%m-%Y_%H-%M-%S") + ".pt"),
+                        default="models/" + datetime.now().strftime("%d-%m-%Y_%H-%M-%S") + ".pt",
                         help='The path to save the checkpoint to. Will be models/dd-mm-YY_HH-MM-SS.pt by default.')
+    parser.add_argument('--save_wandb', action='store_true', help="Whether to upload the checkpoint files to wandb!")
+    parser.add_argument('--no-save_wandb', dest='save_wandb', action='store_false')
+    parser.set_defaults(save_wandb=True)
     parser.add_argument('--graph_log_freq', type=int, default=50,
                         help='Every how many epochs to log graphs to wandb. The final predictions will always be '
                              'logged, except for if this is negative.')
