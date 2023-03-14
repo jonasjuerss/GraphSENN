@@ -77,7 +77,7 @@ class UniqueMotifWrapper(DatasetWrapper):
     def get_node_colors(self, x: np.ndarray) -> np.ndarray:
         return self.color_map[np.argmax(x, axis=-1)]
 
-class UniqueMotifHardWrapper(DatasetWrapper):
+class UniqueMotifHardColorWrapper(DatasetWrapper):
     def __init__(self, num_samples=2000, num_colors=2):
         sampler = UniqueMultipleOccurrencesMotifCategorizationDataset(BinaryTreeMotif(5, [0], num_colors),
                                                                       [HouseMotif([1], [1], num_colors),
@@ -89,8 +89,15 @@ class UniqueMotifHardWrapper(DatasetWrapper):
                          sampler.num_classes, sampler.num_node_features, sampler.class_names)
         self.color_map = np.array(['#2c3e50', '#e74c3c'])
 
-    def get_node_colors(self, x: np.ndarray) -> np.ndarray:
-        return self.color_map[np.argmax(x, axis=-1)]
+class UniqueMotifHardNoColorWrapper(DatasetWrapper):
+    def __init__(self, num_samples=2000):
+        sampler = UniqueMultipleOccurrencesMotifCategorizationDataset(BinaryTreeMotif(5, [0], 1),
+                                                                      [HouseMotif([0], [0], 1),
+                                                                       FullyConnectedMotif(5, [0], 1)],
+                                                                      [[0.4, 0.3, 0.3], [0.4, 0.3, 0.3]],
+                                                                      perturb=0.02)
+        super().__init__([sampler.sample() for _ in range(num_samples)],
+                         sampler.num_classes, sampler.num_node_features, sampler.class_names)
 
 
 class UniqueMotifEasyWrapper(DatasetWrapper):
@@ -107,7 +114,8 @@ class UniqueMotifEasyWrapper(DatasetWrapper):
         return self.color_map[np.argmax(x, axis=-1)]
 
 
-__all__ = [MutagWrapper, EnzymesWrapper, RedditBinaryWrapper, UniqueMotifWrapper, UniqueMotifHardWrapper]
+__all__ = [MutagWrapper, EnzymesWrapper, RedditBinaryWrapper, UniqueMotifWrapper, UniqueMotifHardColorWrapper,
+           UniqueMotifHardNoColorWrapper]
 
 
 def from_name(name: str):
