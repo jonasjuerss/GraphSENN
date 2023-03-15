@@ -1,5 +1,6 @@
 import argparse
 import os.path
+import traceback
 from contextlib import nullcontext
 from datetime import datetime
 from types import SimpleNamespace
@@ -180,6 +181,8 @@ def main(args, **kwargs) -> Tuple[GraphSENN, Any, DataLoader, DataLoader, DataLo
             log({"best_val_acc": best_val_acc}, step=epoch)
     except:
         log({"best_val_acc": -1}, step=epoch)
+        traceback.print_exc()
+
     return model, args, train_loader, val_loader, test_loader
 
 

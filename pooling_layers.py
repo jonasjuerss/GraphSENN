@@ -170,7 +170,7 @@ class GraphSENNPool(PoolingLayer):
             # [num_nodes, num_classes | 1]
             theta_sample = theta[mask]
             batch_sample = torch.zeros(num_nodes, dtype=torch.long, device=custom_logger.device)
-            f = lambda emb: self(emb, batch_sample)[0]
+            f = lambda emb: self(emb, batch_sample, None)[0]
             # [num_nodes, num_classes | 1, num_nodes * input_dim]
             J_x_h = jacobian(self.h, x_out_sample, create_graph=True, vectorize=True) \
                 .reshape(num_nodes, -1, num_nodes * input_dim)
