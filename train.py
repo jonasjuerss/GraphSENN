@@ -41,7 +41,8 @@ def train_test_epoch(train: bool, model: GraphSENN, optimizer, loader: DataLoade
             if train:
                 optimizer.zero_grad()
 
-            out, x_out, theta, h = model(data.x, data.edge_index, data.batch)
+            annotations = data.annotations if hasattr(data, "annotations") else None
+            out, x_out, theta, h = model(data.x, data.edge_index, data.batch, annotations)
             target = data.y
             classification_loss = F.nll_loss(out, target)
             reg_loss, add_loss_dict = model.pooling_layer.calculate_additional_losses(model, data.x, x_out, data.batch,
@@ -127,9 +128,9 @@ def main(args, **kwargs) -> Tuple[GraphSENN, Any, DataLoader, DataLoader, DataLo
     test_data = dataset[num_train_samples + num_val_samples:]
     graphs_to_log = train_data[:args.graphs_to_log] + test_data[:args.graphs_to_log]
 
-    train_loader = DataLoader(train_data, batch_size=args.batch_size, shuffle=True)
-    val_loader = DataLoader(val_data, batch_size=args.batch_size, shuffle=True)
-    test_loader = DataLoader(test_data, batch_size=args.batch_size, shuffle=True)
+    train_loader = DataLoader(train_data, batch_size=args.batch_size, shuffle=kwargs.get("shuffle", True))
+    val_loader = DataLoader(val_data, batch_size=args.batch_size, shuffle=kwargs.get("shuffle", True))
+    test_loader = DataLoader(test_data, batch_size=args.batch_size, shuffle=kwargs.get("shuffle", True))
     log_graph_loader = DataLoader(graphs_to_log, batch_size=1, shuffle=False)
 
     conv_type = next((x for x in CONV_TYPES if x.__name__ == args.conv_type), None)
@@ -146,7 +147,7 @@ def main(args, **kwargs) -> Tuple[GraphSENN, Any, DataLoader, DataLoader, DataLo
             decoder = None
         pool = GraphSENNPool(gnn_output_size, num_classes, args.theta_sizes, args.h_sizes, args.aggregation,
                              args.per_class_theta, args.per_class_h, args.global_theta, args.theta_loss_weight,
-                             args.feat_reconst_loss_weight, args.adj_reconst_loss_weight, decoder)
+                             args.feat_reconst_loss_weight, args.adj_reconst_loss_weight, decoder, True)  # args.learn_h)
     else:
         pool = StandardPoolingLayer(gnn_output_size, num_classes, args.out_sizes, args.aggregation)
 
@@ -197,7 +198,7 @@ if __name__ == "__main__":
 
     # Architecture
     parser.add_argument('--gnn_sizes', type=int, nargs='*',
-                        default=[32, 32, 32, 32, 32], dest='gnn_sizes',
+                        default=[32, 32, 32], dest='gnn_sizes',
                         help='The layer sizes to use for the GNN.')
     parser.add_argument('--conv_type', type=str, default="GCNConv", choices=[c.__name__ for c in CONV_TYPES],
                         help='The type of graph convolution to use. Note: GATConv does not appear to work with h loss.')
@@ -242,7 +243,7 @@ if __name__ == "__main__":
                                                                "use one-hot vector of ground truth annotations "
                                                                "(assuming they are present and fit)")
     parser.add_argument('--no-learn_h', dest='learn_h', action='store_false')
-    parser.set_defaults(per_class_h=True)
+    parser.set_defaults(learn_h=True)
 
     # Theta
     parser.add_argument('--theta_sizes', type=int, nargs='*',
