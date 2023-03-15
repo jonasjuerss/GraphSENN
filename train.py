@@ -306,6 +306,9 @@ if __name__ == "__main__":
     parser.set_defaults(use_wandb=True)
     parser.add_argument('--no_wandb', action='store_false', dest='use_wandb',
                         help='Turns off logging to wandb')
+    parser.add_argument('--wandb_name', type=str,
+                        default=None,
+                        help="Name of the wandb run. Standard randomly generated wandb names if not specified.")
 
     args = parser.parse_args()
     main(args)
