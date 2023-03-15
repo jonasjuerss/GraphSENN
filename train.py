@@ -215,7 +215,7 @@ if __name__ == "__main__":
     # SENN
 
     parser.add_argument('--concept_activation', type=str, default="none",
-                        choices=["none", "sigmoid", "softmax", "gumbel_softmax"],
+                        choices=["none", "sigmoid", "softmax", "gumbel_softmax", "gumbel_softmax_soft"],
                         help='The function applied to the last node embeddings before they serve as input to the h/'
                              'theta networks.')
 

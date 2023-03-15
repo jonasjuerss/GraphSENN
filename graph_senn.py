@@ -9,8 +9,11 @@ from torch_geometric.data import Data
 from pooling_layers import PoolingLayer
 
 class GumbleSoftmaxLayer(torch.nn.Module):
+    def __init__(self, hard: bool):
+        super().__init__()
+        self.hard = hard
     def forward(self, x):
-        return torch.nn.functional.gumbel_softmax(x, hard=True)
+        return torch.nn.functional.gumbel_softmax(x, hard=self.hard)
 class GraphSENN(torch.nn.Module):
     def __init__(self, gnn_sizes: List[int], input_dim: int, output_dim: int, layer_type: Type[torch.nn.Module],
                  gnn_activation, pooling_layer: PoolingLayer, concept_activation: str, **gnn_layer_kwargs):
@@ -36,7 +39,9 @@ class GraphSENN(torch.nn.Module):
         if concept_activation == "softmax":
             gnn_layers.append((torch.nn.Softmax(), 'x -> x'))
         elif concept_activation == "gumbel_softmax":
-            gnn_layers.append((GumbleSoftmaxLayer(), 'x -> x'))
+            gnn_layers.append((GumbleSoftmaxLayer(True), 'x -> x'))
+        elif concept_activation == "gumbel_softmax_soft":
+            gnn_layers.append((GumbleSoftmaxLayer(False), 'x -> x'))
         elif concept_activation != "none":
             raise ValueError(f"Unknown concept activation function {concept_activation}")
 
