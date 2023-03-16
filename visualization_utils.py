@@ -8,6 +8,7 @@ from sklearn.cluster import KMeans
 from sklearn.manifold import TSNE
 from torch_geometric.data import DataLoader, Data
 from torch_geometric.utils import k_hop_subgraph
+from torch_scatter import scatter
 
 import datasets
 from datasets import DatasetWrapper
@@ -19,7 +20,10 @@ class InterpretationData():
         train_loader, val_loader, test_loader = self.load_model(wandb_id)
         self.data_loader = test_loader if data_loader is None else data_loader
         self.load_whole_dataset()
-        self.colors = np.array([matplotlib.colors.rgb2hex(c) for c in pylab.get_cmap("tab20").colors])
+        #self.colors = np.array([matplotlib.colors.rgb2hex(c) for c in pylab.get_cmap("tab20").colors])
+        self.colors = np.array(
+            ['#2c3e50', '#e74c3c', '#27ae60', '#3498db', '#CDDC39', '#f39c12', '#795548', '#8e44ad', '#3F51B5',
+             '#7f8c8d', '#e84393', '#607D8B', '#8e44ad', '#009688'])
     def load_model(self, wandb_id: str):
         self.model, self.config, train_loader, val_loader, test_loader =\
             main(dict(resume=wandb_id, save_path="models/dummy.pt"), use_wandb=False, num_epochs=0, shuffle=False)
@@ -113,10 +117,10 @@ class InterpretationData():
             for j in range(num_plots):
                 self.draw_neighbourhood(axes[i][j], indices[j].item())
         if save_path is not None:
-            fig.savefig(save_path)
+            fig.savefig(save_path, bbox_inches='tight')
         return fig
 
-    def draw_graph(self, sample: int, save_path=None, figsize=(7, 7)):
+    def draw_graph(self, sample: int, color_concepts=False, save_path=None, figsize=(7, 7)):
         fig, ax = plt.subplots(figsize=figsize)
         ax.axis('off')
         mask = self.batch_all == sample
@@ -129,34 +133,53 @@ class InterpretationData():
                                               to_undirected=True)
         labels = self.dataset_wrapper.get_node_labels(x)
         pred_str = ", ".join([f"{100 * f:.0f}%" for f in np.exp(self.out_all[sample])])
+        if color_concepts:
+            # IMPORANT: Note that colors of clusters will not be consistent among different samples this way
+            _, predicted_clusters = np.unique(np.argmax(self.x_out_all[mask], axis=1), return_inverse=True)
+            colors = self.colors[predicted_clusters]
+        else:
+            colors = self.dataset_wrapper.get_node_colors(self.annot_all[mask])
         ax.set_title(
             f"class: {self.y_all[sample]} ({self.dataset_wrapper.class_names[self.y_all[sample].item()]}), prediction: [{pred_str}]")
-        nx.draw(g, ax=ax, node_color=self.dataset_wrapper.get_node_colors(self.annot_all[mask]),
+        nx.draw(g, ax=ax, node_color=colors,
                 labels={i: str(i) for i in range(labels.shape[0])}, font_color="whitesmoke")
 
         if save_path is not None:
-            fig.savefig(save_path)
+            fig.savefig(save_path, bbox_inches='tight')
         return fig
 
-    def plot_theta_and_h(self, sample: int, save_path=None):
-        fig, axes = plt.subplots(2, self.model.output_dim, figsize=(15,5))
+    def plot_theta_and_h(self, sample: int, cluster_colors: bool, save_path=None, flip_signs=True):
+        fig, axes = plt.subplots(1, self.model.output_dim + 1, figsize=(15,3))
         fig.tight_layout()
-        mask = self.batch_all==sample
+        mask = self.batch_all == sample
         theta = self.theta_all[mask]
         h = self.h_all[mask]
-        colors = self.dataset_wrapper.get_node_colors(self.annot_all[mask])
-        axes[0][0].set_ylabel("node/concept id $i$")
-        axes[1][0].set_ylabel("node/concept id $i$")
+        if h.shape[1] != 1:
+            raise ValueError("per class h no longer supported!")
+        if flip_signs:
+            # h: [num_nodes, 1], theta: [num_nodes, num_classes]
+            factors = np.ones_like(h)
+            factors[h[:, 0] < 0] = -1
+            h = factors * h
+            theta = factors * theta
+        if cluster_colors:
+            # IMPORANT: Note that colors of clusters will not be consistent among different samples this way
+            _, predicted_clusters = np.unique(np.argmax(self.x_out_all[mask], axis=1), return_inverse=True)
+            colors = self.colors[predicted_clusters]
+        else:
+            colors = self.dataset_wrapper.get_node_colors(self.annot_all[mask])
+        axes[0].set_ylabel("node id $i$")
+        axes[0].barh(np.arange(h.shape[0]), h[:, 0], color=colors)
+        axes[0].set_xlabel(f"$h_i(x)$")
+        axes[0].invert_yaxis()
         for i in range(self.model.output_dim):
-            axes[0][i].set_title(self.dataset_wrapper.class_names[i])
-            axes[0][i].barh(np.arange(theta.shape[0]), theta[:, 0 if theta.shape[1] == 1 else i], color=colors)
-            axes[0][i].set_xlabel(f"$\\theta_i(x)$")
-            axes[0][i].invert_yaxis()
-            axes[1][i].barh(np.arange(h.shape[0]), h[:, 0 if h.shape[1] == 1 else i], color=colors)
-            axes[1][i].set_xlabel(f"$h_i(x)$")
-            axes[1][i].invert_yaxis()
+            axes[i + 1].set_title(self.dataset_wrapper.class_names[i].replace("+", "+\n"))
+            axes[i + 1].barh(np.arange(theta.shape[0]), theta[:, 0 if theta.shape[1] == 1 else i], color=colors)
+            axes[i + 1].set_xlabel(f"$\\theta_i^({i})(x)$")
+            axes[i + 1].invert_yaxis()
+
         if save_path is not None:
-            fig.savefig(save_path)
+            fig.savefig(save_path, bbox_inches='tight')
         return fig
 
     # Show neighbourhoods of nodes with the most similar embeddings
@@ -178,10 +201,51 @@ class InterpretationData():
         return self.plot_closest_embeddings(present_concepts, [l for l in labels if l is not None],
                                             num_plots=num_samples_per_concept, save_path=save_path)
 
-    def show_category_histogram(self, save_path=None):
+    def plot_category_histogram(self, save_path=None):
         counts = np.bincount(np.argmax(self.x_out_all, axis=1))
         fig, ax = plt.subplots()
         ax.bar(np.arange(counts.shape[0]), counts)
         if save_path is not None:
-            fig.savefig(save_path)
+            fig.savefig(save_path, bbox_inches='tight')
+        return fig
+
+    def calculate_average_activation_shannon_entropy(self):
+        nonzero_logs = np.log2(self.x_out_all, out=np.zeros_like(self.x_out_all), where=(self.x_out_all != 0))
+        return np.mean(np.sum(-self.x_out_all * nonzero_logs, axis=1))
+
+    def _scatter_mean_and_std(self, values, indices):
+        # [num_nodes, k]
+        values = torch.tensor(values)
+        # [num_nodes]
+        indices = torch.tensor(indices)
+        # [num_unique_indices, k]
+        mean = scatter(values, indices, dim=0, reduce="mean")
+        squared_diff = torch.square(values - mean[indices])
+        squared_diff_sums = scatter(squared_diff, indices, dim=0, reduce="sum")
+        n = scatter(torch.ones_like(values), indices, dim=0, reduce="sum")
+        std = torch.sqrt(squared_diff_sums / (n - 1))
+        return mean.detach().numpy(), std.detach().numpy()
+
+
+    def plot_average_theta_and_h(self, save_path=None):
+        fig, ax = plt.subplots()
+        concepts = torch.tensor(np.argmax(self.x_out_all, axis=1))
+
+        # [num_concepts, num_classes], [num_concepts, num_classes]
+        mean_theta, std_theta = self._scatter_mean_and_std(self.theta_all, concepts)
+        # [num_concepts, 1], [num_concepts, 1]
+        mean_h, std_h = self._scatter_mean_and_std(self.h_all, concepts)
+
+        ax.errorbar(np.arange(mean_h.shape[0]), mean_h, std_h, linestyle='None')
+
+        if save_path is not None:
+            fig.savefig(save_path, bbox_inches='tight')
+        return fig
+    def plot_dropout_effect(self, save_path=None):
+        fig, ax = plt.subplots()
+        concepts = torch.tensor(np.argmax(self.x_out_all, axis=1))
+        scatter()
+
+        if save_path is not None:
+            fig.savefig(save_path, bbox_inches='tight')
         return fig
