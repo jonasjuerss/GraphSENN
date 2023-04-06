@@ -39,7 +39,7 @@ class DatasetWrapper(abc.ABC):
 
 class MutagWrapper(DatasetWrapper):
     def __init__(self):
-        dataset = TUDataset(root='/tmp', name='MUTAG')
+        dataset = TUDataset(root='/tmp', name='MUTAG').shuffle()
         super().__init__(dataset, dataset.num_classes, dataset.num_node_features, ["not mutagenic", "mutagenic"])
         self.label_map = np.array(['C', 'O', 'Cl', 'H', 'N', 'F', 'Br', 'S', 'P', 'I', 'Na', 'K', 'Li', 'Ca'])
         self.color_map = np.array(
@@ -55,13 +55,13 @@ class MutagWrapper(DatasetWrapper):
 
 class EnzymesWrapper(DatasetWrapper):
     def __init__(self):
-        dataset = TUDataset(root='/tmp', name='ENZYMES')
+        dataset = TUDataset(root='/tmp', name='ENZYMES').shuffle()
         super().__init__(dataset, dataset.num_classes, dataset.num_node_features)
 
 
 class RedditBinaryWrapper(DatasetWrapper):
     def __init__(self):
-        dataset = TUDataset(root='/tmp', name='REDDIT-BINARY', transform=torch_geometric.transforms.Constant())
+        dataset = TUDataset(root='/tmp', name='REDDIT-BINARY', transform=torch_geometric.transforms.Constant()).shuffle()
         super().__init__(dataset, dataset.num_classes, dataset.num_node_features)
 
 class MotifWrapper(DatasetWrapper, abc.ABC):
